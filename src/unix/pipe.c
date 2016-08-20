@@ -101,7 +101,7 @@ int uv_pipe_listen(uv_pipe_t* handle, int backlog, uv_connection_cb cb) {
   /* On zOS, backlog=0 has undefined behaviour */
   if (backlog == 0)
     backlog = 1;
-  else if(backlog < 0)
+  else if (backlog < 0)
     backlog = SOMAXCONN;
 #endif
 

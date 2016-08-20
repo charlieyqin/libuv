@@ -291,7 +291,10 @@ int uv__stream_try_select(uv_stream_t* stream, int* fd) {
   timeout.tv_sec = 0;
   timeout.tv_nsec = 1;
 
-  ret = kevent(kq, filter, 1, events, 1, &timeout);
+  do
+    ret = kevent(kq, filter, 1, events, 1, &timeout);
+  while (ret == -1 && errno == EINTR);
+
   uv__close(kq);
 
   if (ret == -1)
@@ -1121,8 +1124,9 @@ static void uv__read(uv_stream_t* stream) {
       && (count-- > 0)) {
     assert(stream->alloc_cb != NULL);
 
+    buf = uv_buf_init(NULL, 0);
     stream->alloc_cb((uv_handle_t*)stream, 64 * 1024, &buf);
-    if (buf.len == 0) {
+    if (buf.base == NULL || buf.len == 0) {
       /* User indicates it can't or won't handle the read. */
       stream->read_cb(stream, UV_ENOBUFS, &buf);
       return;

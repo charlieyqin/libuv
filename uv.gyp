@@ -91,6 +91,7 @@
             'src/win/async.c',
             'src/win/atomicops-inl.h',
             'src/win/core.c',
+            'src/win/detect-wakeup.c',
             'src/win/dl.c',
             'src/win/error.c',
             'src/win/fs.c',
@@ -390,6 +391,7 @@
         'test/test-spawn.c',
         'test/test-fs-poll.c',
         'test/test-stdio-over-pipes.c',
+        'test/test-tcp-alloc-cb-fail.c',
         'test/test-tcp-bind-error.c',
         'test/test-tcp-bind6-error.c',
         'test/test-tcp-close.c',
@@ -424,6 +426,7 @@
         'test/test-timer-from-check.c',
         'test/test-timer.c',
         'test/test-tty.c',
+        'test/test-udp-alloc-cb-fail.c',
         'test/test-udp-bind.c',
         'test/test-udp-create-socket-early.c',
         'test/test-udp-dgram-too-big.c',
@@ -456,11 +459,11 @@
             'test/runner-unix.c',
             'test/runner-unix.h',
           ],
-          'conditions': [ 
+          'conditions': [
             [ 'OS != "zos"', {
               'defines': [ '_GNU_SOURCE' ],
               'cflags': [ '-Wno-long-long' ],
-            }], 
+            }],
           ]},
         ],
         [ 'OS in "mac dragonflybsd freebsd linux netbsd openbsd".split()', {
@@ -482,10 +485,10 @@
         }],
         ['uv_library=="shared_library"', {
           'defines': [ 'USING_UV_SHARED=1' ],
-          'conditions': [ 
+          'conditions': [
             [ 'OS == "zos"', {
               'cflags': [ '-Wc,DLL' ],
-            }], 
+            }],
           ],
         }],
       ],
@@ -543,10 +546,17 @@
         }],
         ['uv_library=="shared_library"', {
           'defines': [ 'USING_UV_SHARED=1' ],
+<<<<<<< HEAD
           'conditions': [ 
             [ 'OS == "zos"', {
               'cflags': [ '-Wc,DLL' ],
             }], 
+=======
+          'conditions': [
+            [ 'OS == "zos"', {
+              'cflags': [ '-Wc,DLL' ],
+            }],
+>>>>>>> 0a4b51fcb408c47c6dfa2f5e04d8da44920772c4
           ],
         }],
       ],

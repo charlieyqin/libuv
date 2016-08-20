@@ -352,7 +352,7 @@ void uv_sem_post(uv_sem_t* sem) {
 void uv_sem_wait(uv_sem_t* sem) {
   struct sembuf buf;
   int op_status;
-  
+
   buf.sem_num = 0;
   buf.sem_op = -1;
   buf.sem_flg = 0;
