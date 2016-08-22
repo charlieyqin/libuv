@@ -546,17 +546,10 @@
         }],
         ['uv_library=="shared_library"', {
           'defines': [ 'USING_UV_SHARED=1' ],
-<<<<<<< HEAD
           'conditions': [ 
             [ 'OS == "zos"', {
               'cflags': [ '-Wc,DLL' ],
             }], 
-=======
-          'conditions': [
-            [ 'OS == "zos"', {
-              'cflags': [ '-Wc,DLL' ],
-            }],
->>>>>>> 0a4b51fcb408c47c6dfa2f5e04d8da44920772c4
           ],
         }],
       ],
