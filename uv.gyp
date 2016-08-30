@@ -306,8 +306,9 @@
         ['OS=="zos"', {
           'sources': [
             'src/unix/pthread-fixes.c',
-            'src/unix/pthread-barrier.c'
-            'src/unix/os390.c'
+            'src/unix/pthread-barrier.c',
+            'src/unix/os390.c',
+            'src/unix/os390-syscalls.c'
           ]
         }],
       ]
