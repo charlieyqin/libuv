@@ -28,6 +28,7 @@
               'PATH_MAX=255'
             ],
             'cflags': [ '-qxplink' ],
+            'ldflags': [ '-qxplink' ],
           }]
         ],
       }],
