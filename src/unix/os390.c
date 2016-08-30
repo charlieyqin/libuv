@@ -58,3 +58,7 @@ int uv_fs_event_start(uv_fs_event_t* handle, uv_fs_event_cb cb,
                       const char* filename, unsigned int flags) {
   return -ENOSYS;
 }
+
+int uv_fs_event_stop(uv_fs_event_t* handle) {
+  return -ENOSYS;
+}
