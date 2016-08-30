@@ -21,6 +21,14 @@
 
 #include "internal.h"
 
+void uv_loadavg(double avg[3]) {
+
+  //TODO: implement the following
+  avg[0] = 0;
+  avg[1] = 0;
+  avg[2] = 0;
+}
+
 int uv__io_check_fd(uv_loop_t* loop, int fd) {
   struct pollfd p[1];
   int rv;
