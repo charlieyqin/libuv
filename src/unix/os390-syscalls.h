@@ -24,6 +24,9 @@
 #define UV_OS390_SYSCALL_H_
 
 #include <dirent.h>
+#include <pthread.h>
+/* utility functions */
+int nanosleep(const struct timespec *req, struct timespec *rem);
 int alphasort(const void *a, const void *b);
 int scandir(const char *maindir, struct dirent ***namelist,
             int (*filter)(const struct dirent *),
