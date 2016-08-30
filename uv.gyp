@@ -197,7 +197,7 @@
             }],
           ],
         }],
-        [ 'OS in "linux mac ios android"', {
+        [ 'OS in "linux mac ios android zos"', {
           'sources': [ 'src/unix/proctitle.c' ],
         }],
         [ 'OS != "zos"', {
