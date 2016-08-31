@@ -22,11 +22,18 @@
 
 #include "os390-syscalls.h"
 #include <errno.h>
+#include <assert.h>
 
 #define CW_CONDVAR 32
 
 #pragma linkage(BPX4CTW, OS)
 #pragma linkage(BPX1CTW, OS)
+
+#define PGTH_CURRENT  1
+#define PGTH_LEN      26
+#define PGTHAPATH     0x20
+#pragma linkage(BPX4GTH, OS)
+#pragma linkage(BPX1GTH, OS)
 int alphasort(const void *a, const void *b) {
 
   return strcoll( (*(const struct dirent **)a)->d_name,
@@ -78,6 +85,95 @@ int scandir(const char *maindir, struct dirent ***namelist,
 
   *namelist = nl;
   return count;
+}
+
+int getexe(const int pid, char *buf, size_t len) {
+
+  struct {
+    int pid;
+    int thid[2];
+    char accesspid;
+    char accessthid;
+    char asid[2];
+    char loginname[8];
+    char flag;
+    char len;
+  } Input_data;
+
+  union {
+    struct {
+      char gthb[4];
+      int pid;
+      int thid[2];
+      char accesspid;
+      char accessthid[3];
+      int lenused;
+      int offsetProcess;
+      int offsetConTTY;
+      int offsetPath;
+      int offsetCommand;
+      int offsetFileData;
+      int offsetThread;
+    } Output_data;
+    char buf[2048];
+  } Output_buf;
+
+  struct Output_path_type {
+    char gthe[4];
+    short int len;
+    char path[1024];
+  } ;
+
+  int Input_length = PGTH_LEN;
+  int Output_length = sizeof(Output_buf);
+  void *Input_address = &Input_data;
+  void *Output_address = &Output_buf;
+  struct Output_path_type *Output_path;
+  int rv; 
+  int rc; 
+  int rsn;
+
+  memset(&Input_data, 0, sizeof Input_data);
+  Input_data.flag |= PGTHAPATH;
+  Input_data.pid = pid;
+  Input_data.accesspid = PGTH_CURRENT;
+
+#ifdef _LP64
+  BPX4GTH(&Input_length,
+          &Input_address,
+          &Output_length,
+          &Output_address,
+          &rv,
+          &rc,
+          &rsn);
+#else
+  BPX1GTH(&Input_length,
+          &Input_address,
+          &Output_length,
+          &Output_address,
+          &rv,
+          &rc,
+          &rsn);
+#endif
+
+  if (rv == -1) {
+    errno = rc;
+    return -1;
+  }
+
+
+  assert( ((Output_buf.Output_data.offsetPath >>24) & 0xFF) == 'A');
+  Output_path = (char*)(&Output_buf) + 
+      (Output_buf.Output_data.offsetPath & 0x00FFFFFF);
+  
+  if (Output_path->len >= len) {
+    errno = ENOBUFS;
+    return -1;
+  }
+
+  strncpy(buf, Output_path->path, len);
+
+  return 0;
 }
 
 int nanosleep(const struct timespec *req, struct timespec *rem) {

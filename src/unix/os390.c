@@ -20,6 +20,7 @@
  */
 
 #include "internal.h"
+#include <unistd.h>
 
 void uv_loadavg(double avg[3]) {
 
@@ -28,6 +29,95 @@ void uv_loadavg(double avg[3]) {
   avg[1] = 0;
   avg[2] = 0;
 }
+
+/*
+ * We could use a static buffer for the path manipulations that we need outside
+ * of the function, but this function could be called by multiple consumers and
+ * we don't want to potentially create a race condition in the use of snprintf.
+ * There is no direct way of getting the exe path in AIX - either through /procfs
+ * or through some libc APIs. The below approach is to parse the argv[0]'s pattern
+ * and use it in conjunction with PATH environment variable to craft one.
+ */
+int uv_exepath(char* buffer, size_t* size) {
+  int res;
+  char args[PATH_MAX];
+  char abspath[PATH_MAX];
+  size_t abspath_size;
+  int pid;
+
+  if (buffer == NULL || size == NULL || *size == 0)
+    return -EINVAL;
+
+  pid = getpid();
+  res = getexe(pid, args, sizeof(args));
+  if (res < 0)
+    return -EINVAL;
+
+  /*
+   * Possibilities for args:
+   * i) an absolute path such as: /home/user/myprojects/nodejs/node
+   * ii) a relative path such as: ./node or ../myprojects/nodejs/node
+   * iii) a bare filename such as "node", after exporting PATH variable
+   *     to its location.
+   */
+
+  /* Case i) and ii) absolute or relative paths */
+  if (strchr(args, '/') != NULL) {
+    if (realpath(args, abspath) != abspath)
+      return -errno;
+
+    abspath_size = strlen(abspath);
+
+    *size -= 1;
+    if (*size > abspath_size)
+      *size = abspath_size;
+
+    memcpy(buffer, abspath, *size);
+    buffer[*size] = '\0';
+
+    return 0;
+  } else {
+  /* Case iii). Search PATH environment variable */
+    char trypath[PATH_MAX];
+    char *clonedpath = NULL;
+    char *token = NULL;
+    char *path = getenv("PATH");
+
+    if (path == NULL)
+      return -EINVAL;
+
+    clonedpath = uv__strdup(path);
+    if (clonedpath == NULL)
+      return -ENOMEM;
+
+    token = strtok(clonedpath, ":");
+    while (token != NULL) {
+      snprintf(trypath, sizeof(trypath) - 1, "%s/%s", token, args);
+      if (realpath(trypath, abspath) == abspath) {
+        /* Check the match is executable */
+        if (access(abspath, X_OK) == 0) {
+          abspath_size = strlen(abspath);
+
+          *size -= 1;
+          if (*size > abspath_size)
+            *size = abspath_size;
+
+          memcpy(buffer, abspath, *size);
+          buffer[*size] = '\0';
+
+          uv__free(clonedpath);
+          return 0;
+        }
+      }
+      token = strtok(NULL, ":");
+    }
+    uv__free(clonedpath);
+
+    /* Out of tokens (path entries), and no match found */
+    return -EINVAL;
+  }
+}
+
 
 int uv__io_check_fd(uv_loop_t* loop, int fd) {
   struct pollfd p[1];

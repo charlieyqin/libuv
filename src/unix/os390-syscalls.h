@@ -32,6 +32,7 @@ int scandir(const char *maindir, struct dirent ***namelist,
             int (*filter)(const struct dirent *),
             int (*compar)(const struct dirent **,
             const struct dirent **));
+int getexe(const int pid, char *buf, size_t len);
 
 
 #endif /* UV_OS390_SYSCALL_H_ */
