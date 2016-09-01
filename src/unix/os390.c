@@ -27,7 +27,11 @@
 #include <sys/time.h>
 #include <sys/ps.h>
 #include <unistd.h>
+#if defined(__clang__)
+#include "csrsic.h"
+#else
 #include "//'SYS1.SAMPLIB(CSRSIC)'"
+#endif
 
 #define CVT_PTR           0x10
 #define CSD_OFFSET        0x294
