@@ -33,7 +33,6 @@
 #define EPOLL_CTL_ADD             1
 #define EPOLL_CTL_DEL             2
 #define EPOLL_CTL_MOD             3
-#define EPOLL_CTL_ADD_MSGQ        4
 #define MAX_EPOLL_INSTANCES       256
 #define MAX_ITEMS_PER_EPOLL       1024
 
@@ -42,7 +41,6 @@
 #define UV__EPOLL_CTL_ADD         EPOLL_CTL_ADD
 #define UV__EPOLL_CTL_DEL         EPOLL_CTL_DEL
 #define UV__EPOLL_CTL_MOD         EPOLL_CTL_MOD
-#define UV__EPOLL_CTL_ADD_MSGQ    EPOLL_CTL_ADD_MSGQ
 
 
 typedef union epoll_data {
@@ -56,20 +54,9 @@ struct epoll_event {
 
 struct _epoll_list{
   struct pollfd items[MAX_ITEMS_PER_EPOLL];
-  struct pollfd *aio;
   int size;
   pthread_mutex_t lock;
 };
-
-#define uv__async_connect uv__zos_aio_connect
-#define uv__async_write(req, stream, buf, len) \
-        uv__zos_aio_write(req, stream, buf, len, 0)
-#define uv__async_writev(req, stream, buf, len) \
-        uv__zos_aio_write(req, stream, buf, len, 1)
-#define uv__async_read(stream, buf, len) \
-        uv__zos_aio_read(stream, &buf, &len)
-#define uv__async_accept(stream) \
-        uv__zos_aio_accept(stream)
 
 /* epoll api */
 int epoll_create1(int flags);

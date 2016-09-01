@@ -23,49 +23,5 @@
 #define UV_MVS_H
 
 #define UV_PLATFORM_SEM_T int
-#define _AIO_OS390
-#include <aio.h>
-#include <sys/msg.h>
-
-#define AIO_MSG_READ 	  1
-#define AIO_MSG_WRITE 	2
-#define AIO_MSG_ACCEPT 	3
-#define AIO_MSG_CONNECT 4
-
-#if defined(__64BIT__)
-#define ZASYNC BPX4AIO
-#else
-#define ZASYNC BPX1AIO
-#endif
-
-struct AioMsg {         /* The I/O Complete Message          */
-  long int mm_type;   	/* Msg type: used for type of I/O    */
-  void *mm_ptr; 		    /* Msg text: identifies the handle   */
-};
-
-#define UV_PLATFORM_LOOP_FIELDS     				\
-  int msgqid;
-
-#define UV_TCP_PRIVATE_PLATFORM_FIELDS			\
-  int is_bound;                             \
-  int is_listening;
-
-#define UV_PLATFORM_WRITE_FIELDS	      		\
-  struct aiocb aio_write;		            		\
-  struct AioMsg aio_write_msg;
-
-#define UV_STREAM_PRIVATE_PLATFORM_FIELDS		\
-  struct aiocb aio_read;	            			\
-  struct aiocb aio_cancel;		           		\
-  struct AioMsg aio_read_msg;				        \
-  struct AioMsg aio_cancel_msg;			        \
-  int last_op_rv;                           \
-  uv_buf_t bufsml;
-
-#define UV_PLATFORM_CONNECT_FIELDS		    	\
-  struct aiocb aio_connect;				          \
-  struct AioMsg aio_connect_msg;
-
-#define UV_IO_PRIVATE_PLATFORM_FIELDS       \
 
 #endif /* UV_MVS_H */

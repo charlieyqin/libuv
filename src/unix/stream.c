@@ -100,11 +100,6 @@ void uv__stream_init(uv_loop_t* loop,
 
 #if defined(__APPLE__)
   stream->select = NULL;
-#elif defined(__MVS__)
-  memset(&stream->aio_read, 0, sizeof(struct aiocb));
-  stream->last_op_rv = 0;
-  stream->bufsml.base = (char*)malloc(64);
-  stream->bufsml.len = 64;
 #endif /* defined(__APPLE_) */
 
   uv__io_init(&stream->io_watcher, uv__stream_io, -1);
@@ -414,9 +409,6 @@ int uv__stream_open(uv_stream_t* stream, int fd, int flags) {
       return -errno;
   }
 
-  if ((stream->flags & UV_STREAM_BLOCKING) && uv__nonblock(fd, 0))
-    return -errno;
-
 #if defined(__APPLE__)
   enable = 1;
   if (setsockopt(fd, SOL_SOCKET, SO_OOBINLINE, &enable, sizeof(enable)) &&
@@ -471,12 +463,6 @@ void uv__stream_destroy(uv_stream_t* stream) {
     stream->shutdown_req = NULL;
   }
 
-#if defined(__MVS__)
-  if(stream->bufsml.len > 0) {
-    free(stream->bufsml.base);
-    stream->bufsml.len = 0;
-  }
-#endif
   assert(stream->write_queue_size == 0);
 }
 
@@ -545,7 +531,8 @@ void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
       return;
 #endif /* defined(UV_HAVE_KQUEUE) */
 
-    err = uv__async_accept(stream);
+    err = uv__accept(uv__stream_fd(stream));
+//printf("accept:%d fd=%d gives us fd=%d\n", __LINE__,uv__stream_fd(stream),  err);
     if (err < 0) {
       if (err == -EAGAIN || err == -EWOULDBLOCK)
         return;  /* Not an error. */
@@ -593,19 +580,12 @@ int uv_accept(uv_stream_t* server, uv_stream_t* client) {
   if (server->accepted_fd == -1)
     return -EAGAIN;
 
-  int flags = UV_STREAM_READABLE | UV_STREAM_WRITABLE;
-
-#if defined(__MVS__)
-  if(client->type == UV_TCP)
-    flags |= UV_STREAM_BLOCKING;
-#endif
-
   switch (client->type) {
     case UV_NAMED_PIPE:
     case UV_TCP:
       err = uv__stream_open(client,
                             server->accepted_fd,
-                            flags);
+                            UV_STREAM_READABLE | UV_STREAM_WRITABLE);
       if (err) {
         /* TODO handle error */
         uv__close(server->accepted_fd);
@@ -848,9 +828,9 @@ start:
   } else {
     do {
       if (iovcnt == 1) {
-        n = uv__async_write(req, stream, iov[0].iov_base, iov[0].iov_len);
+        n = write(uv__stream_fd(stream), iov[0].iov_base, iov[0].iov_len);
       } else {
-        n = uv__async_writev(req, stream, iov, iovcnt);
+        n = writev(uv__stream_fd(stream), iov, iovcnt);
       }
     }
 #if defined(__APPLE__)
@@ -878,9 +858,7 @@ start:
       return;
     } else if (stream->flags & UV_STREAM_BLOCKING) {
       /* If this is a blocking stream, try again. */
-#if !defined(__MVS__)
       goto start;
-#endif
     }
   } else {
     /* Successful write */
@@ -934,9 +912,7 @@ start:
   assert(n == 0 || n == -1);
 
   /* Only non-blocking streams should use the write_watcher. */
-#if !defined(__MVS__) /* streams on zOS are blocking but asynchronously read */
   assert(!(stream->flags & UV_STREAM_BLOCKING));
-#endif
 
   /* We're not done. */
   uv__io_start(stream->loop, &stream->io_watcher, POLLOUT);
@@ -1164,7 +1140,7 @@ static void uv__read(uv_stream_t* stream) {
 
     if (!is_ipc) {
       do {
-        nread = uv__async_read(stream, buf.base, buf.len);
+        nread = read(uv__stream_fd(stream), buf.base, buf.len);
       }
       while (nread < 0 && errno == EINTR);
     } else {
@@ -1440,9 +1416,6 @@ int uv_write2(uv_write_t* req,
   req->handle = stream;
   req->error = 0;
   req->send_handle = send_handle;
-#if defined(__MVS__)
-  memset(&req->aio_write, 0, sizeof(struct aiocb));
-#endif
   QUEUE_INIT(&req->queue);
 
   req->bufs = req->bufsml;
@@ -1476,10 +1449,7 @@ int uv_write2(uv_write_t* req,
      * if this assert fires then somehow the blocking stream isn't being
      * sufficiently flushed in uv__write.
      */
-
-#if !defined(__MVS__)
     assert(!(stream->flags & UV_STREAM_BLOCKING));
-#endif
     uv__io_start(stream->loop, &stream->io_watcher, POLLOUT);
     uv__stream_osx_interrupt_select(stream);
   }
@@ -1656,9 +1626,6 @@ void uv__stream_close(uv_stream_t* handle) {
 
   uv__io_close(handle->loop, &handle->io_watcher);
   uv_read_stop(handle);
-#if defined(__MVS__)
-  uv__asyncio_zos_cancel(handle);
-#endif
   uv__handle_stop(handle);
 
   if (handle->io_watcher.fd != -1) {

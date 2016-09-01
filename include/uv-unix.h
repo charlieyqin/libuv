@@ -242,11 +242,9 @@ typedef struct {
   unsigned int nbufs;                                                         \
   int error;                                                                  \
   uv_buf_t bufsml[4];                                                         \
-  UV_PLATFORM_WRITE_FIELDS                                                    \
 
 #define UV_CONNECT_PRIVATE_FIELDS                                             \
   void* queue[2];                                                             \
-  UV_PLATFORM_CONNECT_FIELDS                                                  \
 
 #define UV_SHUTDOWN_PRIVATE_FIELDS /* empty */
 
@@ -275,8 +273,7 @@ typedef struct {
   void* queued_fds;                                                           \
   UV_STREAM_PRIVATE_PLATFORM_FIELDS                                           \
 
-#define UV_TCP_PRIVATE_FIELDS                                                 \
-    UV_TCP_PRIVATE_PLATFORM_FIELDS
+#define UV_TCP_PRIVATE_FIELDS /* empty */
 
 #define UV_UDP_PRIVATE_FIELDS                                                 \
   uv_alloc_cb alloc_cb;                                                       \

@@ -92,18 +92,14 @@ int uv__tcp_bind(uv_tcp_t* tcp,
                  unsigned int flags) {
   int err;
   int on;
-  int sockflags;
 
   /* Cannot set IPv6-only mode on non-IPv6 socket. */
   if ((flags & UV_TCP_IPV6ONLY) && addr->sa_family != AF_INET6)
     return -EINVAL;
 
-  sockflags = UV_STREAM_READABLE | UV_STREAM_WRITABLE;
-#if defined(__MVS__)
-  sockflags |= UV_STREAM_BLOCKING;
-#endif
-
-  err = maybe_new_socket(tcp, addr->sa_family, sockflags);
+  err = maybe_new_socket(tcp,
+                         addr->sa_family,
+                         UV_STREAM_READABLE | UV_STREAM_WRITABLE);
   if (err)
     return err;
 
@@ -153,19 +149,15 @@ int uv__tcp_connect(uv_connect_t* req,
                     uv_connect_cb cb) {
   int err;
   int r;
-  int sockflags;
 
   assert(handle->type == UV_TCP);
 
   if (handle->connect_req != NULL)
     return -EALREADY;  /* FIXME(bnoordhuis) -EINVAL or maybe -EBUSY. */
 
-  sockflags = UV_STREAM_READABLE | UV_STREAM_WRITABLE;
-#if defined(__MVS__)
-  sockflags |= UV_STREAM_BLOCKING;
-#endif
-
-  err = maybe_new_socket(handle, addr->sa_family, sockflags);
+  err = maybe_new_socket(handle,
+                         addr->sa_family,
+                         UV_STREAM_READABLE | UV_STREAM_WRITABLE);
   if (err)
     return err;
 
@@ -173,7 +165,8 @@ int uv__tcp_connect(uv_connect_t* req,
 
   do {
     errno = 0;
-    r = uv__async_connect(req, handle, addr, addrlen);
+    r = connect(uv__stream_fd(handle), addr, addrlen);
+//printf("connect fd=%d\n", uv__stream_fd(handle));
   } while (r == -1 && errno == EINTR);
 
   /* We not only check the return value, but also check the errno != 0.
@@ -212,13 +205,13 @@ int uv__tcp_connect(uv_connect_t* req,
 int uv_tcp_open(uv_tcp_t* handle, uv_os_sock_t sock) {
   int err;
 
-  return uv__stream_open((uv_stream_t*)handle, sock, 
-				  UV_STREAM_READABLE 
-				| UV_STREAM_WRITABLE
-#if defined(__MVS__)
-				| UV_STREAM_BLOCKING
-#endif
-				);
+  err = uv__nonblock(sock, 1);
+  if (err)
+    return err;
+
+  return uv__stream_open((uv_stream_t*)handle,
+                         sock,
+                         UV_STREAM_READABLE | UV_STREAM_WRITABLE);
 }
 
 
@@ -292,7 +285,6 @@ int uv_tcp_listen(uv_tcp_t* tcp, int backlog, uv_connection_cb cb) {
      an arbitrary port is required to be done manually
   */
 
-  tcp->is_listening = 1;
   if (!(tcp->flags & UV_HANDLE_BOUND)) {
     struct sockaddr_storage saddr;
     socklen_t slen  = sizeof(saddr);
