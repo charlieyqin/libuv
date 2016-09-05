@@ -21,6 +21,7 @@
 
 #include "internal.h"
 #include <unistd.h>
+#include <sys/ps.h>
 
 #define CVT_PTR           0x10
 #define CSD_OFFSET        0x294
@@ -163,6 +164,16 @@ uint64_t uv_get_total_memory(void) {
   return totalram;
 }
 
+int uv_resident_set_memory(size_t* rss) {
+  W_PSPROC buf;
+
+  memset(&buf, 0x00, sizeof(buf));
+  if (w_getpsent(0, &buf, sizeof(W_PSPROC)) == -1)
+    return -EINVAL;
+
+  *rss = buf.ps_size;
+  return 0;
+}
 
 int uv__io_check_fd(uv_loop_t* loop, int fd) {
   struct pollfd p[1];
