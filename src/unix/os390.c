@@ -102,12 +102,11 @@ void uv__platform_loop_delete(uv_loop_t* loop) {
 }
 
 uint64_t uv__hrtime(uv_clocktype_t type) {
+  uint64_t G = 1000000000;
+  uint64_t K = 1000;
   struct timeval t;
   gettimeofday(&t, NULL);
-  uint64_t s = t.tv_sec ;
-  s *= 1000000000;
-  s += (t.tv_usec*1000);
-  return s;
+  return (uint64_t) t.tv_sec * G + t.tv_usec * K;
 }
 
 /*
