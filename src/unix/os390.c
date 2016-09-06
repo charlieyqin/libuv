@@ -22,11 +22,37 @@
 #include "internal.h"
 #include <sys/ioctl.h>
 #include <net/if.h>
+#include <utmpx.h>
 #include <unistd.h>
 #include <sys/ps.h>
+#if defined(__clang__)
+#include "csrsic.h"
+#else
+#include "//'SYS1.SAMPLIB(CSRSIC)'"
+#endif
 
 #define CVT_PTR           0x10
 #define CSD_OFFSET        0x294
+
+/* 
+    Long-term average CPU service used by this logical partition,
+    in millions of service units per hour. If this value is above
+    the partition's defined capacity, the partition will be capped.
+    It is calculated using the physical CPU adjustment factor
+    (RCTPCPUA) so it may not match other measures of service which
+    are based on the logical CPU adjustment factor. It is available
+    if the hardware supports LPAR cluster.
+*/
+#define RCTLACS_OFFSET    0xC4
+
+/* 32-bit count of alive CPUs. This includes both CPs and IFAs */
+#define CSD_NUMBER_ONLINE_CPUS        0xD4
+
+/* ADDRESS OF SYSTEM RESOURCES MANAGER (SRM) CONTROL TABLE */
+#define CVTOPCTP_OFFSET   0x25C
+
+/* Address of the RCT table */
+#define RMCTRCT_OFFSET    0xE4
 
 /* "V(IARMRRCE)" - ADDRESS OF THE RSM CONTROL AND ENUMERATION AREA. */
 #define CVTRCEP_OFFSET    0x490
@@ -175,6 +201,75 @@ int uv_resident_set_memory(size_t* rss) {
 
   *rss = buf.ps_size;
   return 0;
+}
+
+int uv_uptime(double* uptime) {
+  struct utmpx u ;
+  struct utmpx *v;
+  time64_t t;
+
+  u.ut_type = BOOT_TIME;
+  v = getutxid(&u);
+  if (v == NULL)
+    return -1;
+  *uptime = difftime64( time64(&t), v->ut_tv.tv_sec);
+  return 0;
+}
+
+int uv_cpu_info(uv_cpu_info_t** cpu_infos, int* count) {
+  uv_cpu_info_t* cpu_info;
+  int result;
+  int idx;
+  siv1v2 info;
+  data_area_ptr cvt = {0};
+  data_area_ptr csd = {0};
+  data_area_ptr rmctrct = {0};
+  data_area_ptr cvtopctp = {0};
+  int cpu_usage_avg;
+
+  cvt.assign = *(data_area_ptr_assign_type*)(CVT_PTR);
+
+  csd.assign = *((data_area_ptr_assign_type *) (cvt.deref + CSD_OFFSET));
+  cvtopctp.assign = *((data_area_ptr_assign_type *) (cvt.deref + CVTOPCTP_OFFSET));
+  rmctrct.assign = *((data_area_ptr_assign_type *) (cvtopctp.deref + RMCTRCT_OFFSET));
+
+  *count = *((int*) (csd.deref + CSD_NUMBER_ONLINE_CPUS));
+  cpu_usage_avg = *((unsigned short int*) (rmctrct.deref + RCTLACS_OFFSET));
+
+  *cpu_infos = (uv_cpu_info_t*) uv__malloc(*count * sizeof(uv_cpu_info_t));
+  if (!*cpu_infos)
+    return -ENOMEM;
+
+  cpu_info = *cpu_infos;
+  idx = 0;
+  while (idx < *count) {
+
+    cpu_info->speed = *(int*)(info.siv1v2si22v1.si22v1cpucapability);
+    cpu_info->model = malloc(17);
+    memset(cpu_info->model, '\0', 17);
+    memcpy(cpu_info->model, info.siv1v2si11v1.si11v1cpcmodel, 16);
+    cpu_info->cpu_times.user = cpu_usage_avg;
+
+    //TODO: implement the following
+    cpu_info->cpu_times.sys = 0;
+    cpu_info->cpu_times.idle = 0;
+    cpu_info->cpu_times.irq = 0;
+    cpu_info->cpu_times.nice = 0;
+    cpu_info++;
+    idx++;
+  }
+
+  return 0;
+}
+
+void uv_free_cpu_info(uv_cpu_info_t* cpu_infos, int count) {
+  int i;
+
+  for (i = 0; i < count; ++i) {
+    uv__free(cpu_infos[i].model);
+  }
+
+  uv__free(cpu_infos);
 }
 
 static int uv__interface_addresses_v6(uv_interface_address_t** addresses,
