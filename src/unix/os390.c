@@ -86,6 +86,14 @@ void uv_loadavg(double avg[3]) {
   avg[2] = 0;
 }
 
+uint64_t uv__hrtime(uv_clocktype_t type) {
+  uint64_t G = 1000000000;
+  uint64_t K = 1000;
+  struct timeval t;
+  gettimeofday(&t, NULL);
+  return (uint64_t) t.tv_sec * G + t.tv_usec * K;
+}
+
 /*
  * We could use a static buffer for the path manipulations that we need outside
  * of the function, but this function could be called by multiple consumers and
