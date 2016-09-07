@@ -231,7 +231,29 @@ skip:
 
 
 static ssize_t uv__fs_mkdtemp(uv_fs_t* req) {
-  return mkdtemp((char*) req->path) ? 0 : -1;
+  char *path = (char*) req->path;
+
+#if defined(__MVS__)
+  /* There is no mkdtemp. So instead use mktemp to generate a
+     temporary file. Then delete that file and use the name
+     to create a temporary directory.
+  */
+  while (1) {
+    int fd = mkstemp(path);
+    if (fd == -1 || close(fd) || remove(path))
+      return -1;
+    
+    if (mkdir(path, S_IRWXU) != 0)
+      if (errno == EEXIST)
+        continue;
+      else
+        return -1;
+    else
+      return 0;
+  }
+#else
+  return mkdtemp(path) ? 0 : -1;
+#endif
 }
 
 
