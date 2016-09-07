@@ -93,7 +93,9 @@ int scandir(const char *maindir, struct dirent ***namelist,
   return count;
 }
 
-static int isfdequal(const struct pollfd* a, const struct pollfd* b) {
+static int isfdequal(const void* first, const void* second) {
+  const struct pollfd* a = (const struct pollfd*)first;
+  const struct pollfd* b = (const struct pollfd*)second;
   return a->fd == b->fd ? 0 : 1;
 }
 

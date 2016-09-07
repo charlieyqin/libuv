@@ -737,3 +737,5 @@ update_timeout:
   }
 }
 
+void uv__set_process_title(const char* title) {
+}
