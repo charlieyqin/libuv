@@ -533,6 +533,10 @@ int uv__io_check_fd(uv_loop_t* loop, int fd) {
   return 0;
 }
 
+void uv__fs_event_close(uv_fs_event_t* handle) {
+  UNREACHABLE();
+}
+
 int uv_fs_event_init(uv_loop_t* loop, uv_fs_event_t* handle) {
   uv__handle_init(loop, (uv_handle_t*)handle, UV_FS_EVENT);
   return 0;
