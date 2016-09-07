@@ -42,20 +42,15 @@
 #define UV__EPOLL_CTL_DEL         EPOLL_CTL_DEL
 #define UV__EPOLL_CTL_MOD         EPOLL_CTL_MOD
 
-
-typedef union epoll_data {
-  int fd;
-} epoll_data_t;
-
 struct epoll_event {
-  uint32_t events;      /* Epoll events */
-  epoll_data_t data;        /* User data variable */
+  int events;
+  int fd;
 };
 
 struct _epoll_list{
   struct pollfd items[MAX_ITEMS_PER_EPOLL];
-  int size;
-  pthread_mutex_t lock;
+  unsigned long size;
+  uv_mutex_t lock;
 };
 
 /* epoll api */

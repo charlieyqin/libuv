@@ -25,6 +25,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <search.h>
 
 #define CW_CONDVAR    32
 #pragma linkage(BPX4CTW, OS)
@@ -93,89 +94,24 @@ int scandir(const char *maindir, struct dirent ***namelist,
   return count;
 }
 
-
-static int removefd(struct _epoll_list *lst, int fd)
-{
-  if(fd == -1)
-    return 0;
-
-  int realsize = lst->size;
-  int deletion_point = realsize;                         
-  for (int i = 0; i < realsize; ++i)                     
-  {                                                                  
-    if(lst->items[i].fd == fd)                                            
-    {                                                              
-      deletion_point = i;                                        
-      break;                                                     
-    }                                                              
-  }                                                                  
-
-  if (deletion_point < realsize)
-  {                                                                  
-    /* deleting a file descriptor */
-    for (int i = deletion_point; i < realsize; ++i)    
-    {                                                              
-      lst->items[i] = lst->items[i+1];
-    }                                                              
-    --(lst->size);
-    return 1;
-  }
-  else
-    return 0;
-}
-
-static int _doesExist(struct _epoll_list *lst, int fd, int *index)
-{
-
-  for (int i = 0; i < lst->size; ++i)                     
-  {                                                                  
-    if(lst->items[i].fd == fd)                                            
-    {
-      *index=i;
-      return 1;
-    }
-  }                                                                  
-  return 0;
-}
-
-static void _modify(struct _epoll_list *lst, int index, struct epoll_event events)
-{
-  struct pollfd *i = &lst->items[index];
-  i->events = 0;
-  if(events.events & POLLIN)
-    i->events |= POLLIN; 
-  if(events.events & POLLOUT)
-    i->events |= POLLOUT; 
-  if(events.events & POLLHUP)
-    i->events |= POLLHUP; 
-
-}
-
-static int append(struct _epoll_list *lst, int fd, struct epoll_event events)
-{
-  if (lst->size == MAX_ITEMS_PER_EPOLL - 1)
-    return ENOMEM;
-
-  // remember, lst->size contains the msgq
-
-  lst->items[lst->size].fd = fd;
-  _modify(lst, lst->size, events); 
-  ++lst->size;
-
-  return 0;
+static int isfdequal(const struct pollfd* a, const struct pollfd* b) {
+  return a->fd == b->fd ? 0 : 1;
 }
 
 int epoll_create1(int flags)
 {
-  struct _epoll_list* p = (struct _epoll_list*)malloc(sizeof(struct _epoll_list));
+  struct _epoll_list* p = (struct _epoll_list*)malloc(
+                           sizeof(struct _epoll_list));
+
   memset(p, 0, sizeof(struct _epoll_list));
   int index = number_of_epolls++;
   _global_epoll_list[index] = p;
 
-  if(pthread_mutex_init(&p->lock, NULL)) {
+  if (uv_mutex_init(&p->lock)) {
     errno = ENOLCK;
     return -1;
   }
+
   p->size = 0;
   return index; 
 }
@@ -184,36 +120,70 @@ int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)
 {
   struct _epoll_list *lst = _global_epoll_list[epfd];
 
-  if(op == EPOLL_CTL_DEL){
-    if(!removefd(lst, fd))
+  if (op == EPOLL_CTL_DEL) {
+
+    struct pollfd* found;
+    struct pollfd pfd;
+
+    pfd.fd = fd;
+    uv_mutex_lock(&lst->lock);
+    found = lfind(&pfd, &lst->items[0], &lst->size,
+                  sizeof(struct pollfd), isfdequal);
+    if (found != NULL)
+      memcpy(found,
+             found+1,
+             (&lst->items[lst->size--] - found - 1) * sizeof(*found));
+    uv_mutex_unlock(&lst->lock);
+
+    if (found == NULL)
       return ENOENT;
+
   }
   else if(op == EPOLL_CTL_ADD)
   {
-    int index;
-    pthread_mutex_lock(&lst->lock);
-    if( _doesExist(lst, fd, &index) )
-    {
-      pthread_mutex_unlock(&lst->lock);
+    struct pollfd* found;
+    struct pollfd pfd;
+    size_t before;
+    size_t after;
+
+    if (lst->size == MAX_ITEMS_PER_EPOLL - 1)
+      return ENOMEM;
+
+    pfd.fd = fd;
+    pfd.events = event->events;
+    uv_mutex_lock(&lst->lock);
+    before = lst->size; 
+    found = lsearch(&pfd, &lst->items[0], &lst->size,
+                    sizeof(struct pollfd), isfdequal);
+    after = lst->size; 
+    uv_mutex_unlock(&lst->lock);
+
+    if (found != NULL && before == after) {
       errno = EEXIST;
       return -1;
     }
-    int retval = append(lst, fd, *event);
-    pthread_mutex_unlock(&lst->lock);
-    return retval;
+
   }
   else if(op == EPOLL_CTL_MOD)
   {
     int index;
-    pthread_mutex_lock(&lst->lock);
-    if( !_doesExist(lst, fd, &index) )
-    {
-      pthread_mutex_lock(&lst->lock);
+    struct pollfd* found;
+    struct pollfd pfd;
+
+    pfd.fd = fd;
+    uv_mutex_lock(&lst->lock);
+    found = lfind(&pfd, &lst->items[0], &lst->size,
+                  sizeof(struct pollfd), isfdequal);
+
+    if (found != NULL)
+      found->events = event->events;
+      
+    uv_mutex_unlock(&lst->lock);
+
+    if (found == NULL) {
       errno = ENOENT;
       return -1;
     }
-    _modify(lst, index, *event);
-    pthread_mutex_unlock(&lst->lock);
   }
   else 
   {
@@ -234,12 +204,11 @@ int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
     return returnval;
 
   int reventcount=0;
-  // size + 1 will include the msgq
   int realsize = lst->size;
   for (int i = 0; i < realsize && i < maxevents; ++i)                     
   {
     struct epoll_event ev = { 0, 0 };
-    ev.data.fd = pfds[i].fd;
+    ev.fd = pfds[i].fd;
     if(!pfds[i].revents)
       continue;
 
@@ -250,12 +219,7 @@ int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
       ev.events = ev.events | POLLOUT;
 
     if(pfds[i].revents & POLLHUP)
-    {
       ev.events = ev.events | POLLHUP;
-      pthread_mutex_lock(&lst->lock);
-      removefd(lst, ev.data.fd);
-      pthread_mutex_unlock(&lst->lock);
-    }
 
     pfds[i].revents = 0;
     events[reventcount++] = ev; 
@@ -270,12 +234,20 @@ int epoll_file_close(int fd)
   for( int i = 0; i < number_of_epolls; ++i )
   {
     struct _epoll_list *lst = _global_epoll_list[i];
-    int index;
-    pthread_mutex_lock(&lst->lock);
-    if(_doesExist(lst, fd, &index) )
-      removefd(lst, fd);
-    pthread_mutex_unlock(&lst->lock);
+    struct pollfd* found;
+    struct pollfd pfd;
+
+    pfd.fd = fd;
+    uv_mutex_lock(&lst->lock);
+    found = lfind(&pfd, &lst->items[0], &lst->size,
+                  sizeof(struct pollfd), isfdequal);
+    if (found != NULL)
+      memcpy(found,
+             found+1,
+             (&lst->items[lst->size--] - found - 1) * sizeof(*found));
+    uv_mutex_unlock(&lst->lock);
   }
+
   return 0;
 }
 

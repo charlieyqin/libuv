@@ -500,8 +500,8 @@ void uv__platform_invalidate_fd(uv_loop_t* loop, int fd) {
   if (events != NULL)
     /* Invalidate events with same file descriptor */
     for (i = 0; i < nfds; i++)
-      if ((int) events[i].data.fd == fd)
-        events[i].data.fd = -1;
+      if ((int) events[i].fd == fd)
+        events[i].fd = -1;
 
   /* Remove the file descriptor from the epoll.
    * This avoids a problem where the same file description remains open
@@ -598,7 +598,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     assert(w->fd < (int) loop->nwatchers);
 
     e.events = w->pevents;
-    e.data.fd = w->fd;
+    e.fd = w->fd;
 
     if (w->events == 0)
       op = UV__EPOLL_CTL_ADD;
@@ -687,7 +687,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     loop->watchers[loop->nwatchers + 1] = (void*) (uintptr_t) nfds;
     for (i = 0; i < nfds; i++) {
       pe = events + i;
-      fd = pe->data.fd;
+      fd = pe->fd;
 
       /* Skip invalidated events, see uv__platform_invalidate_fd */
       if (fd == -1)
