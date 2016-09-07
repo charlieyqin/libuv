@@ -238,11 +238,19 @@ static ssize_t uv__fs_mkdtemp(uv_fs_t* req) {
      temporary file. Then delete that file and use the name
      to create a temporary directory.
   */
-  path = mktemp(path);
-  remove(path);
-  if (*path == '\0' || mkdir(path, S_IRWXU))
-    return -1;
-  return 0;
+  while (1) {
+    int fd = mkstemp(path);
+    if (fd == -1 || close(fd) || remove(path))
+      return -1;
+    
+    if (mkdir(path, S_IRWXU) != 0)
+      if (errno == EEXIST)
+        continue;
+      else
+        return -1;
+    else
+      return 0;
+  }
 #else
   return mkdtemp(path) ? 0 : -1;
 #endif
