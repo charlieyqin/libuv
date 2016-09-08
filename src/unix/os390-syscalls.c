@@ -42,8 +42,8 @@ struct _epoll_list* _global_epoll_list[MAX_EPOLL_INSTANCES];
 
 int alphasort(const void *a, const void *b) {
 
-  return strcoll( (*(const struct dirent **)a)->d_name,
-                  (*(const struct dirent **)b)->d_name );
+  return strcoll( (*(const struct dirent **) a)->d_name,
+                  (*(const struct dirent **) b)->d_name );
 }
 
 int scandir(const char *maindir, struct dirent ***namelist,
@@ -94,8 +94,8 @@ int scandir(const char *maindir, struct dirent ***namelist,
 }
 
 static int isfdequal(const void* first, const void* second) {
-  const struct pollfd* a = (const struct pollfd*)first;
-  const struct pollfd* b = (const struct pollfd*)second;
+  const struct pollfd* a = (const struct pollfd*) first;
+  const struct pollfd* b = (const struct pollfd*) second;
   return a->fd == b->fd ? 0 : 1;
 }
 
