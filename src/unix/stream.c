@@ -1194,6 +1194,28 @@ static void uv__read(uv_stream_t* stream) {
           return;
         }
       }
+
+#if defined(__MVS__)
+      if (is_ipc && msg.msg_controllen > 0) {
+        uv_buf_t blankbuf = {0, 0};
+        int nread;
+        struct iovec *old;
+
+        old = msg.msg_iov;
+        msg.msg_iov = (struct iovec*) &blankbuf;
+        nread = 0;
+        do {
+          nread = uv__recvmsg(uv__stream_fd(stream), &msg, 0);
+          err = uv__stream_recv_cmsg(stream, &msg);
+          if (err != 0) {
+            stream->read_cb(stream, err, &buf);
+            msg.msg_iov = old;
+            return;
+          }
+        } while ( nread == 0 && msg.msg_controllen > 0 );
+        msg.msg_iov = old;
+      }
+#endif
       stream->read_cb(stream, nread, &buf);
 
       /* Return if we didn't fill the buffer, there is no more data to read. */
