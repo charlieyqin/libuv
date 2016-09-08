@@ -273,7 +273,7 @@ int uv_cpu_info(uv_cpu_info_t** cpu_infos, int* count) {
   while (idx < *count) {
 
     cpu_info->speed = *(int*)(info.siv1v2si22v1.si22v1cpucapability);
-    cpu_info->model = malloc(17);
+    cpu_info->model = uv__malloc(17);
     memset(cpu_info->model, '\0', 17);
     memcpy(cpu_info->model, info.siv1v2si11v1.si11v1cpcmodel, 16);
     cpu_info->cpu_times.user = cpu_usage_avg;

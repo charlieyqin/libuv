@@ -66,7 +66,7 @@ int scandir(const char *maindir, struct dirent ***namelist,
       break;
     if (!filter || filter(dirent)) {
       struct dirent *copy;
-      copy = (struct dirent *)malloc(sizeof(*copy));
+      copy = (struct dirent *)uv__malloc(sizeof(*copy));
       if (!copy) {
         while (count) {
           dirent = nl[--count];
@@ -101,7 +101,7 @@ static int isfdequal(const void* first, const void* second) {
 
 int epoll_create1(int flags)
 {
-  struct _epoll_list* p = (struct _epoll_list*)malloc(
+  struct _epoll_list* p = (struct _epoll_list*)uv__malloc(
                            sizeof(struct _epoll_list));
 
   memset(p, 0, sizeof(struct _epoll_list));

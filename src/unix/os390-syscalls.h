@@ -65,6 +65,6 @@ int scandir(const char *maindir, struct dirent ***namelist,
             int (*compar)(const struct dirent **,
             const struct dirent **));
 int getexe(const int pid, char *buf, size_t len);
-
+void* uv__malloc(size_t);
 
 #endif /* UV_OS390_SYSCALL_H_ */
