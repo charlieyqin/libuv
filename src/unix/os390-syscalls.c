@@ -31,20 +31,8 @@
 #pragma linkage(BPX4CTW, OS)
 #pragma linkage(BPX1CTW, OS)
 
-#define PGTH_CURRENT  1
-#define PGTH_LEN      26
-#define PGTHAPATH     0x20
-#pragma linkage(BPX4GTH, OS)
-#pragma linkage(BPX1GTH, OS)
-
 static int number_of_epolls;
 struct _epoll_list* _global_epoll_list[MAX_EPOLL_INSTANCES];
-
-int alphasort(const void *a, const void *b) {
-
-  return strcoll( (*(const struct dirent **) a)->d_name,
-                  (*(const struct dirent **) b)->d_name );
-}
 
 int scandir(const char *maindir, struct dirent ***namelist,
             int (*filter)(const struct dirent *),
@@ -66,20 +54,20 @@ int scandir(const char *maindir, struct dirent ***namelist,
       break;
     if (!filter || filter(dirent)) {
       struct dirent *copy;
-      copy = (struct dirent *)uv__malloc(sizeof(*copy));
+      copy = uv__malloc(sizeof(*copy));
       if (!copy) {
         while (count) {
           dirent = nl[--count];
-          free(dirent);
+          uv__free(dirent);
         }
-        free(nl);
+        uv__free(nl);
         closedir(mdir);
         errno = ENOMEM;
         return -1;
       }
       memcpy(copy, dirent, sizeof(*copy));
 
-      nl = (struct dirent *)realloc(nl, count+1);
+      nl = uv__realloc(nl, count+1);
       nl[count++] = copy;
     }
   }
@@ -101,8 +89,7 @@ static int isfdequal(const void* first, const void* second) {
 
 int epoll_create1(int flags)
 {
-  struct _epoll_list* p = (struct _epoll_list*)uv__malloc(
-                           sizeof(struct _epoll_list));
+  struct _epoll_list* p = uv__malloc(sizeof(struct _epoll_list));
 
   memset(p, 0, sizeof(struct _epoll_list));
   int index = number_of_epolls++;
@@ -197,12 +184,14 @@ int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
 {
   struct _epoll_list *lst = _global_epoll_list[epfd];
 
+  uv_mutex_lock(&lst->lock);
   unsigned int size = lst->size;
-
   struct pollfd *pfds = lst->items;
   int returnval = poll( pfds, size, timeout );
-  if(returnval == -1)
+  if(returnval == -1) {
+    uv_mutex_unlock(&lst->lock);
     return returnval;
+  }
 
   int reventcount=0;
   int realsize = lst->size;
@@ -227,6 +216,7 @@ int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
 
   }
 
+  uv_mutex_unlock(&lst->lock);
   return reventcount;
 }
 
@@ -252,99 +242,10 @@ int epoll_file_close(int fd)
   return 0;
 }
 
-int getexe(const int pid, char *buf, size_t len) {
-
-  struct {
-    int pid;
-    int thid[2];
-    char accesspid;
-    char accessthid;
-    char asid[2];
-    char loginname[8];
-    char flag;
-    char len;
-  } Input_data;
-
-  union {
-    struct {
-      char gthb[4];
-      int pid;
-      int thid[2];
-      char accesspid;
-      char accessthid[3];
-      int lenused;
-      int offsetProcess;
-      int offsetConTTY;
-      int offsetPath;
-      int offsetCommand;
-      int offsetFileData;
-      int offsetThread;
-    } Output_data;
-    char buf[2048];
-  } Output_buf;
-
-  struct Output_path_type {
-    char gthe[4];
-    short int len;
-    char path[1024];
-  } ;
-
-  int Input_length = PGTH_LEN;
-  int Output_length = sizeof(Output_buf);
-  void *Input_address = &Input_data;
-  void *Output_address = &Output_buf;
-  struct Output_path_type *Output_path;
-  int rv; 
-  int rc; 
-  int rsn;
-
-  memset(&Input_data, 0, sizeof Input_data);
-  Input_data.flag |= PGTHAPATH;
-  Input_data.pid = pid;
-  Input_data.accesspid = PGTH_CURRENT;
-
-#ifdef _LP64
-  BPX4GTH(&Input_length,
-          &Input_address,
-          &Output_length,
-          &Output_address,
-          &rv,
-          &rc,
-          &rsn);
-#else
-  BPX1GTH(&Input_length,
-          &Input_address,
-          &Output_length,
-          &Output_address,
-          &rv,
-          &rc,
-          &rsn);
-#endif
-
-  if (rv == -1) {
-    errno = rc;
-    return -1;
-  }
-
-
-  assert( ((Output_buf.Output_data.offsetPath >>24) & 0xFF) == 'A');
-  Output_path = (char*)(&Output_buf) + 
-      (Output_buf.Output_data.offsetPath & 0x00FFFFFF);
-  
-  if (Output_path->len >= len) {
-    errno = ENOBUFS;
-    return -1;
-  }
-
-  strncpy(buf, Output_path->path, len);
-
-  return 0;
-}
-
 int nanosleep(const struct timespec *req, struct timespec *rem) {
   unsigned nano;
   unsigned seconds;
-  unsigned events=32;
+  unsigned events;
   unsigned secrem;
   unsigned nanorem;
   int rv, rc, rsn;
@@ -359,14 +260,12 @@ int nanosleep(const struct timespec *req, struct timespec *rem) {
   BPX1CTW(&seconds, &nano, &events, &secrem, &nanorem, &rv, &rc, &rsn);
 #endif
 
+  assert(rv == -1 && errno == EAGAIN);
+
   if(rem != NULL) {
     rem->tv_nsec = nanorem;
     rem->tv_sec = secrem;
   }
 
-  if(rv == -1 && errno == EAGAIN)
-    return 0;
-  
-  errno = ENOTSUP;
-  return -1;
+  return 0;
 }

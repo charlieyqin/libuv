@@ -66,6 +66,16 @@
 /* TOTAL NUMBER OF FRAMES CURRENTLY ON ALL AVAILABLE FRAME QUEUES. */
 #define RCEAFC_OFFSET     0x088
 
+/* CPC model length from the CSRSI Service. */
+#define CPCMODEL_LENGTH   16
+
+/* Thread Entry constants */
+#define PGTH_CURRENT  1
+#define PGTH_LEN      26
+#define PGTHAPATH     0x20
+#pragma linkage(BPX4GTH, OS)
+#pragma linkage(BPX1GTH, OS)
+
 typedef unsigned data_area_ptr_assign_type;
 
 typedef union {
@@ -79,7 +89,6 @@ typedef union {
 } data_area_ptr; 
 
 void uv_loadavg(double avg[3]) {
-
   /* TODO: implement the following */
   avg[0] = 0;
   avg[1] = 0;
@@ -107,18 +116,110 @@ void uv__platform_loop_delete(uv_loop_t* loop) {
 }
 
 uint64_t uv__hrtime(uv_clocktype_t type) {
-  uint64_t G = 1000000000;
-  uint64_t K = 1000;
   struct timeval t;
   gettimeofday(&t, NULL);
-  return (uint64_t) t.tv_sec * G + t.tv_usec * K;
+  return (uint64_t) t.tv_sec * 1e9 + t.tv_usec * 1e3;
+}
+
+/*  
+    Get the exe path using the thread entry information
+    in the address space.
+*/
+static int getexe(const int pid, char *buf, size_t len) {
+  struct {
+    int pid;
+    int thid[2];
+    char accesspid;
+    char accessthid;
+    char asid[2];
+    char loginname[8];
+    char flag;
+    char len;
+  } Input_data;
+
+  union {
+    struct {
+      char gthb[4];
+      int pid;
+      int thid[2];
+      char accesspid;
+      char accessthid[3];
+      int lenused;
+      int offsetProcess;
+      int offsetConTTY;
+      int offsetPath;
+      int offsetCommand;
+      int offsetFileData;
+      int offsetThread;
+    } Output_data;
+    char buf[2048];
+  } Output_buf;
+
+  struct Output_path_type {
+    char gthe[4];
+    short int len;
+    char path[1024];
+  } ;
+
+  int Input_length = PGTH_LEN;
+  int Output_length = sizeof(Output_buf);
+  void *Input_address = &Input_data;
+  void *Output_address = &Output_buf;
+  struct Output_path_type *Output_path;
+  int rv; 
+  int rc; 
+  int rsn;
+
+  memset(&Input_data, 0, sizeof Input_data);
+  Input_data.flag |= PGTHAPATH;
+  Input_data.pid = pid;
+  Input_data.accesspid = PGTH_CURRENT;
+
+#ifdef _LP64
+  BPX4GTH(&Input_length,
+          &Input_address,
+          &Output_length,
+          &Output_address,
+          &rv,
+          &rc,
+          &rsn);
+#else
+  BPX1GTH(&Input_length,
+          &Input_address,
+          &Output_length,
+          &Output_address,
+          &rv,
+          &rc,
+          &rsn);
+#endif
+
+  if (rv == -1) {
+    errno = rc;
+    return -1;
+  }
+
+  /* Check highest byte to ensure data availability */
+  assert( ((Output_buf.Output_data.offsetPath >>24) & 0xFF) == 'A');
+
+  /* Get the offset from the lowest 3 bytes */
+  Output_path = (char*)(&Output_buf) + 
+      (Output_buf.Output_data.offsetPath & 0x00FFFFFF);
+  
+  if (Output_path->len >= len) {
+    errno = ENOBUFS;
+    return -1;
+  }
+
+  strncpy(buf, Output_path->path, len);
+
+  return 0;
 }
 
 /*
  * We could use a static buffer for the path manipulations that we need outside
  * of the function, but this function could be called by multiple consumers and
  * we don't want to potentially create a race condition in the use of snprintf.
- * There is no direct way of getting the exe path in AIX - either through /procfs
+ * There is no direct way of getting the exe path in zOS - either through /procfs
  * or through some libc APIs. The below approach is to parse the argv[0]'s pattern
  * and use it in conjunction with PATH environment variable to craft one.
  */
@@ -264,27 +365,25 @@ int uv_cpu_info(uv_cpu_info_t** cpu_infos, int* count) {
   *count = *((int*) (csd.deref + CSD_NUMBER_ONLINE_CPUS));
   cpu_usage_avg = *((unsigned short int*) (rmctrct.deref + RCTLACS_OFFSET));
 
-  *cpu_infos = (uv_cpu_info_t*) uv__malloc(*count * sizeof(uv_cpu_info_t));
+  *cpu_infos = uv__malloc(*count * sizeof(uv_cpu_info_t));
   if (!*cpu_infos)
     return -ENOMEM;
 
   cpu_info = *cpu_infos;
   idx = 0;
   while (idx < *count) {
-
     cpu_info->speed = *(int*)(info.siv1v2si22v1.si22v1cpucapability);
-    cpu_info->model = uv__malloc(17);
-    memset(cpu_info->model, '\0', 17);
-    memcpy(cpu_info->model, info.siv1v2si11v1.si11v1cpcmodel, 16);
+    cpu_info->model = uv__malloc(CPCMODEL_LENGTH + 1);
+    memset(cpu_info->model, '\0', CPCMODEL_LENGTH + 1);
+    memcpy(cpu_info->model, info.siv1v2si11v1.si11v1cpcmodel, CPCMODEL_LENGTH);
     cpu_info->cpu_times.user = cpu_usage_avg;
-
     /* TODO: implement the following */
     cpu_info->cpu_times.sys = 0;
     cpu_info->cpu_times.idle = 0;
     cpu_info->cpu_times.irq = 0;
     cpu_info->cpu_times.nice = 0;
-    cpu_info++;
-    idx++;
+    ++cpu_info;
+    ++idx;
   }
 
   return 0;
@@ -301,7 +400,7 @@ void uv_free_cpu_info(uv_cpu_info_t* cpu_infos, int count) {
 }
 
 static int uv__interface_addresses_v6(uv_interface_address_t** addresses,
-    int* count) {
+                                      int* count) {
   uv_interface_address_t* address;
   int sockfd;
   int size = 16384;
@@ -417,7 +516,7 @@ int uv_interface_addresses(uv_interface_address_t** addresses,
 
     memcpy(flg.ifr_name, p->ifr_name, sizeof(flg.ifr_name));
     if (ioctl(sockfd, SIOCGIFFLAGS, &flg) == -1) {
-      SAVE_ERRNO(uv__close(sockfd));
+      uv__close(sockfd);
       return -errno;
     }
 
@@ -428,8 +527,9 @@ int uv_interface_addresses(uv_interface_address_t** addresses,
   }
 
   /* Alloc the return interface structs */
-  *addresses = (uv_interface_address_t*)
-    uv__malloc((*count + count_v6) * sizeof(uv_interface_address_t));
+  *addresses = uv__malloc((*count + count_v6) * 
+                          sizeof(uv_interface_address_t));
+
   if (!(*addresses)) {
     uv__close(sockfd);
     return -ENOMEM;

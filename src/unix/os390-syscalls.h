@@ -59,12 +59,11 @@ int epoll_pwait(int epfd, struct epoll_event *events, int maxevents, int timeout
 int epoll_file_close(int fd);
 /* utility functions */
 int nanosleep(const struct timespec *req, struct timespec *rem);
-int alphasort(const void *a, const void *b);
 int scandir(const char *maindir, struct dirent ***namelist,
             int (*filter)(const struct dirent *),
             int (*compar)(const struct dirent **,
             const struct dirent **));
-int getexe(const int pid, char *buf, size_t len);
 void* uv__malloc(size_t);
+void* uv__realloc(void*, size_t);
 
 #endif /* UV_OS390_SYSCALL_H_ */
