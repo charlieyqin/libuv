@@ -48,22 +48,22 @@
 /* 32-bit count of alive CPUs. This includes both CPs and IFAs */
 #define CSD_NUMBER_ONLINE_CPUS        0xD4
 
-/* ADDRESS OF SYSTEM RESOURCES MANAGER (SRM) CONTROL TABLE */
+/* Address of system resources manager (SRM) control table */
 #define CVTOPCTP_OFFSET   0x25C
 
 /* Address of the RCT table */
 #define RMCTRCT_OFFSET    0xE4
 
-/* "V(IARMRRCE)" - ADDRESS OF THE RSM CONTROL AND ENUMERATION AREA. */
+/* Address of the rsm control and enumeration area. */
 #define CVTRCEP_OFFSET    0x490
 
 /* 
-    NUMBER OF FRAMES CURRENTLY AVAILABLE TO SYSTEM. 
-    EXCLUDED ARE FRAMES BACKING PERM STORAGE, FRAMES OFFLINE, AND BAD FRAMES
+    Number of frames currently available to system. 
+    Excluded are frames backing perm storage, frames offline, and bad frames.
 */
 #define RCEPOOL_OFFSET    0x004
 
-/* TOTAL NUMBER OF FRAMES CURRENTLY ON ALL AVAILABLE FRAME QUEUES. */
+/* Total number of frames currently on all available frame queues. */
 #define RCEAFC_OFFSET     0x088
 
 /* CPC model length from the CSRSI Service. */
