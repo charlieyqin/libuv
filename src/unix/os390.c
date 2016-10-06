@@ -116,16 +116,16 @@ void uv__platform_loop_delete(uv_loop_t* loop) {
 }
 
 uint64_t uv__hrtime(uv_clocktype_t type) {
-  struct timeval t;
-  gettimeofday(&t, NULL);
-  return (uint64_t) t.tv_sec * 1e9 + t.tv_usec * 1e3;
+  struct timeval time;
+  gettimeofday(&time, NULL);
+  return (uint64_t) time.tv_sec * 1e9 + time.tv_usec * 1e3;
 }
 
 /*  
     Get the exe path using the thread entry information
     in the address space.
 */
-static int getexe(const int pid, char *buf, size_t len) {
+static int getexe(const int pid, char* buf, size_t len) {
   struct {
     int pid;
     int thid[2];
@@ -159,17 +159,21 @@ static int getexe(const int pid, char *buf, size_t len) {
     char gthe[4];
     short int len;
     char path[1024];
-  } ;
+  };
 
-  int Input_length = PGTH_LEN;
-  int Output_length = sizeof(Output_buf);
-  void *Input_address = &Input_data;
-  void *Output_address = &Output_buf;
-  struct Output_path_type *Output_path;
+  int Input_length;
+  int Output_length;
+  void* Input_address;
+  void* Output_address;
+  struct Output_path_type* Output_path;
   int rv; 
   int rc; 
   int rsn;
 
+  Input_length = PGTH_LEN;
+  Output_length = sizeof(Output_buf);
+  Output_address = &Output_buf;
+  Input_address = &Input_data;
   memset(&Input_data, 0, sizeof Input_data);
   Input_data.flag |= PGTHAPATH;
   Input_data.pid = pid;
@@ -203,7 +207,7 @@ static int getexe(const int pid, char *buf, size_t len) {
 
   /* Get the offset from the lowest 3 bytes */
   Output_path = (char*)(&Output_buf) + 
-      (Output_buf.Output_data.offsetPath & 0x00FFFFFF);
+                (Output_buf.Output_data.offsetPath & 0x00FFFFFF);
   
   if (Output_path->len >= len) {
     errno = ENOBUFS;
@@ -262,11 +266,11 @@ int uv_exepath(char* buffer, size_t* size) {
 
     return 0;
   } else {
-  /* Case iii). Search PATH environment variable */
+    /* Case iii). Search PATH environment variable */
     char trypath[PATH_MAX];
-    char *clonedpath = NULL;
-    char *token = NULL;
-    char *path = getenv("PATH");
+    char* clonedpath = NULL;
+    char* token = NULL;
+    char* path = getenv("PATH");
 
     if (path == NULL)
       return -EINVAL;
@@ -304,20 +308,24 @@ int uv_exepath(char* buffer, size_t* size) {
 }
 
 uint64_t uv_get_free_memory(void) {
+  uint64_t freeram;
+
   data_area_ptr cvt = {0};
   data_area_ptr rcep = {0};
   cvt.assign = *(data_area_ptr_assign_type*)(CVT_PTR);
   rcep.assign = *(data_area_ptr_assign_type*)(cvt.deref + CVTRCEP_OFFSET);
-  uint64_t freeram = *((uint64_t*)(rcep.deref + RCEAFC_OFFSET)) * 4;
+  freeram = *((uint64_t*)(rcep.deref + RCEAFC_OFFSET)) * 4;
   return freeram;
 }
 
 uint64_t uv_get_total_memory(void) {
+  uint64_t totalram;
+
   data_area_ptr cvt = {0};
   data_area_ptr rcep = {0};
   cvt.assign = *(data_area_ptr_assign_type*)(CVT_PTR);
   rcep.assign = *(data_area_ptr_assign_type*)(cvt.deref + CVTRCEP_OFFSET);
-  uint64_t totalram = *((uint64_t*)(rcep.deref + RCEPOOL_OFFSET)) * 4;
+  totalram = *((uint64_t*)(rcep.deref + RCEPOOL_OFFSET)) * 4;
   return totalram;
 }
 
@@ -390,12 +398,8 @@ int uv_cpu_info(uv_cpu_info_t** cpu_infos, int* count) {
 }
 
 void uv_free_cpu_info(uv_cpu_info_t* cpu_infos, int count) {
-  int i;
-
-  for (i = 0; i < count; ++i) {
+  for (int i = 0; i < count; ++i)
     uv__free(cpu_infos[i].model);
-  }
-
   uv__free(cpu_infos);
 }
 
@@ -415,7 +419,7 @@ static int uv__interface_addresses_v6(uv_interface_address_t** addresses,
 
   ifc.__nif6h_version = 1;
   ifc.__nif6h_buflen = size;
-  ifc.__nif6h_buffer = (char*)uv__malloc(size);;
+  ifc.__nif6h_buffer = uv__malloc(size);;
 
   if (ioctl(sockfd, SIOCGIFCONF6, &ifc) == -1) {
     SAVE_ERRNO(uv__close(sockfd));
@@ -429,8 +433,7 @@ static int uv__interface_addresses_v6(uv_interface_address_t** addresses,
   *count = ifc.__nif6h_entries;
 
   /* Alloc the return interface structs */
-  *addresses = (uv_interface_address_t*)
-    uv__malloc(*count * sizeof(uv_interface_address_t));
+  *addresses = uv__malloc(*count * sizeof(uv_interface_address_t));
   if (!(*addresses)) {
     uv__close(sockfd);
     return -ENOMEM;
@@ -473,27 +476,28 @@ static int uv__interface_addresses_v6(uv_interface_address_t** addresses,
   return 0;
 }
 
-int uv_interface_addresses(uv_interface_address_t** addresses,
-    int* count) {
+int uv_interface_addresses(uv_interface_address_t** addresses, int* count) {
   uv_interface_address_t* address;
   int sockfd;
   int size = 16384;
   struct ifconf ifc;
-  struct ifreq *ifr, *p, flg;
+  struct ifreq flg;
+  struct ifreq* ifr;
+  struct ifreq* p;
+  int count_v6;
 
   /* get the ipv6 addresses first */
-  uv_interface_address_t *addresses_v6;
-  int count_v6;
+  uv_interface_address_t* addresses_v6;
   uv__interface_addresses_v6(&addresses_v6, &count_v6);
 
   /* now get the ipv4 addresses */
   *count = 0;
 
-  if (0 > (sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP))) {
+  sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+  if (0 > sockfd)
     return -errno;
-  }
 
-  ifc.ifc_req = (struct ifreq*)uv__malloc(size);
+  ifc.ifc_req = uv__malloc(size);
   ifc.ifc_len = size;
   if (ioctl(sockfd, SIOCGIFCONF, &ifc) == -1) {
     SAVE_ERRNO(uv__close(sockfd));
@@ -638,8 +642,7 @@ void uv__fs_event_close(uv_fs_event_t* handle) {
 }
 
 int uv_fs_event_init(uv_loop_t* loop, uv_fs_event_t* handle) {
-  uv__handle_init(loop, (uv_handle_t*)handle, UV_FS_EVENT);
-  return 0;
+  return -ENOSYS;
 }
 
 int uv_fs_event_start(uv_fs_event_t* handle, uv_fs_event_cb cb,
@@ -659,8 +662,6 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
   int real_timeout;
   QUEUE* q;
   uv__io_t* w;
-  sigset_t sigset;
-  uint64_t sigmask;
   uint64_t base;
   int count;
   int nfds=0;
@@ -674,6 +675,8 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
   }
 
   while (!QUEUE_EMPTY(&loop->watcher_queue)) {
+    uv_stream_t* stream;
+
     q = QUEUE_HEAD(&loop->watcher_queue);
     QUEUE_REMOVE(q);
     QUEUE_INIT(q);
@@ -682,7 +685,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     assert(w->pevents != 0);
     assert(w->fd >= 0);
 
-    uv_stream_t *stream= container_of(w, uv_stream_t, io_watcher);
+    stream= container_of(w, uv_stream_t, io_watcher);
 
     assert(w->fd < (int) loop->nwatchers);
 
@@ -711,13 +714,6 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     w->events = w->pevents;
   }
 
-  sigmask = 0;
-  if (loop->flags & UV_LOOP_BLOCK_SIGPROF) {
-    sigemptyset(&sigset);
-    sigaddset(&sigset, SIGPROF);
-    sigmask |= 1 << (SIGPROF - 1);
-  }
-
   assert(timeout >= -1);
   base = loop->time;
   count = 48; /* Benchmarks suggest this gives the best throughput. */
@@ -725,14 +721,11 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
   int nevents = 0;
 
   for (;;) {
-
     if (sizeof(int32_t) == sizeof(long) && timeout >= max_safe_timeout)
       timeout = max_safe_timeout;
 
-    nfds = epoll_wait(loop->backend_fd,
-        events,
-        ARRAY_SIZE(events),
-        timeout);
+    nfds = epoll_wait(loop->backend_fd, events,
+                      ARRAY_SIZE(events), timeout);
 
     /* Update loop->time unconditionally. It's tempting to skip the update when
      * timeout == 0 (i.e. non-blocking poll) but there is no guarantee that the
@@ -740,10 +733,8 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
      */
     base = loop->time;
     SAVE_ERRNO(uv__update_time(loop));
-
     if (nfds == 0) {
       assert(timeout != -1);
-
       timeout = real_timeout - timeout;
       if (timeout > 0)
         continue;

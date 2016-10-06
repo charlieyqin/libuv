@@ -40,7 +40,7 @@ int scandir(const char *maindir, struct dirent ***namelist,
             const struct dirent **)) {
   struct dirent **nl = NULL;
   struct dirent *dirent;
-  size_t count = 0;
+  unsigned count = 0;
   size_t allocated = 0;
   DIR *mdir;
 
@@ -73,7 +73,7 @@ int scandir(const char *maindir, struct dirent ***namelist,
   }
 
   qsort(nl, count, sizeof(struct dirent *),
-      (int (*)(const void *, const void *))compar);
+       (int (*)(const void *, const void *))compar);
 
   closedir(mdir);
 
@@ -82,41 +82,55 @@ int scandir(const char *maindir, struct dirent ***namelist,
 }
 
 static int isfdequal(const void* first, const void* second) {
-  const struct pollfd* a = (const struct pollfd*) first;
-  const struct pollfd* b = (const struct pollfd*) second;
+  const struct pollfd* a = first;
+  const struct pollfd* b = second;
   return a->fd == b->fd ? 0 : 1;
 }
 
-int epoll_create1(int flags)
-{
-  struct _epoll_list* p = uv__malloc(sizeof(struct _epoll_list));
+static struct pollfd* findpfd(int epfd, int fd, int events) {
+  struct _epoll_list *lst;
+  struct pollfd pfd;
+  struct pollfd* found;
 
-  memset(p, 0, sizeof(struct _epoll_list));
-  int index = number_of_epolls++;
-  _global_epoll_list[index] = p;
+  pfd.fd = fd;
+  pfd.events = events;
+  lst = _global_epoll_list[epfd];
+  if (events == 0)
+    return lfind(&pfd, &lst->items[0], &lst->size,
+                  sizeof(pfd), isfdequal);
+  else
+    return lsearch(&pfd, &lst->items[0], &lst->size,
+                  sizeof(pfd), isfdequal);
+}
 
-  if (uv_mutex_init(&p->lock)) {
+int epoll_create1(int flags) {
+  struct _epoll_list* list;
+  int index;
+
+  list = uv__malloc(sizeof(*list));
+  memset(list, 0, sizeof(*list));
+  index = number_of_epolls++;
+  _global_epoll_list[index] = list;
+
+  if (uv_mutex_init(&list->lock)) {
     errno = ENOLCK;
     return -1;
   }
 
-  p->size = 0;
+  list->size = 0;
   return index; 
 }
 
-int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)
-{
-  struct _epoll_list *lst = _global_epoll_list[epfd];
+int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
+  struct _epoll_list *lst;
 
-  if (op == EPOLL_CTL_DEL) {
+  lst = _global_epoll_list[epfd];
+  uv_mutex_lock(&lst->lock);
 
+  if(op == EPOLL_CTL_DEL) {
     struct pollfd* found;
-    struct pollfd pfd;
 
-    pfd.fd = fd;
-    uv_mutex_lock(&lst->lock);
-    found = lfind(&pfd, &lst->items[0], &lst->size,
-                  sizeof(struct pollfd), isfdequal);
+    found = findpfd(epfd, fd, 0); 
     if (found != NULL)
       memcpy(found,
              found+1,
@@ -127,22 +141,18 @@ int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)
       return ENOENT;
 
   }
-  else if(op == EPOLL_CTL_ADD)
-  {
+  else if(op == EPOLL_CTL_ADD) {
     struct pollfd* found;
-    struct pollfd pfd;
     size_t before;
     size_t after;
 
-    if (lst->size == MAX_ITEMS_PER_EPOLL - 1)
+    if (lst->size == MAX_ITEMS_PER_EPOLL - 1) {
+      uv_mutex_unlock(&lst->lock);
       return ENOMEM;
+    }
 
-    pfd.fd = fd;
-    pfd.events = event->events;
-    uv_mutex_lock(&lst->lock);
     before = lst->size; 
-    found = lsearch(&pfd, &lst->items[0], &lst->size,
-                    sizeof(struct pollfd), isfdequal);
+    found = findpfd(epfd, fd, event->events);
     after = lst->size; 
     uv_mutex_unlock(&lst->lock);
 
@@ -152,49 +162,43 @@ int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)
     }
 
   }
-  else if(op == EPOLL_CTL_MOD)
-  {
-    int index;
+  else if(op == EPOLL_CTL_MOD) {
     struct pollfd* found;
-    struct pollfd pfd;
 
-    pfd.fd = fd;
-    uv_mutex_lock(&lst->lock);
-    found = lfind(&pfd, &lst->items[0], &lst->size,
-                  sizeof(struct pollfd), isfdequal);
-
+    found = findpfd(epfd, fd, 0);
     if (found != NULL)
       found->events = event->events;
-      
+    
     uv_mutex_unlock(&lst->lock);
-
     if (found == NULL) {
       errno = ENOENT;
       return -1;
     }
   }
-  else 
-  {
+  else {
     abort();
   }
   return 0;
 }
 
-int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
-{
-  struct _epoll_list *lst = _global_epoll_list[epfd];
+int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout) {
+  struct _epoll_list *lst;
+  size_t size;
+  struct pollfd* pfds;
+  int pollret;
 
+  lst = _global_epoll_list[epfd];
   uv_mutex_lock(&lst->lock);
-  unsigned int size = lst->size;
-  struct pollfd *pfds = lst->items;
-  int returnval = poll( pfds, size, timeout );
-  if(returnval == -1) {
+  size = lst->size;
+  pfds = lst->items;
+  pollret = poll(pfds, size, timeout);
+  if(pollret == -1) {
     uv_mutex_unlock(&lst->lock);
-    return returnval;
+    return pollret;
   }
 
   int reventcount=0;
-  int realsize = lst->size;
+  size_t realsize = lst->size;
   for (int i = 0; i < realsize && i < maxevents; ++i)                     
   {
     struct epoll_event ev = { 0, 0 };
@@ -213,25 +217,21 @@ int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
 
     pfds[i].revents = 0;
     events[reventcount++] = ev; 
-
   }
 
   uv_mutex_unlock(&lst->lock);
   return reventcount;
 }
 
-int epoll_file_close(int fd)
-{
+int epoll_file_close(int fd) {
   for( int i = 0; i < number_of_epolls; ++i )
   {
-    struct _epoll_list *lst = _global_epoll_list[i];
+    struct _epoll_list *lst;
     struct pollfd* found;
-    struct pollfd pfd;
 
-    pfd.fd = fd;
+    lst = _global_epoll_list[i];
     uv_mutex_lock(&lst->lock);
-    found = lfind(&pfd, &lst->items[0], &lst->size,
-                  sizeof(struct pollfd), isfdequal);
+    found = findpfd(i, fd, 0);
     if (found != NULL)
       memcpy(found,
              found+1,
@@ -242,15 +242,17 @@ int epoll_file_close(int fd)
   return 0;
 }
 
-int nanosleep(const struct timespec *req, struct timespec *rem) {
+int nanosleep(const struct timespec* req, struct timespec* rem) {
   unsigned nano;
   unsigned seconds;
   unsigned events;
   unsigned secrem;
   unsigned nanorem;
-  int rv, rc, rsn;
+  int rv;
+  int rc;
+  int rsn;
 
-  nano = req->tv_nsec;
+  nano = (int)req->tv_nsec;
   seconds = req->tv_sec;
   events = CW_CONDVAR;
   

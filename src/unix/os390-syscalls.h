@@ -24,6 +24,7 @@
 #define UV_OS390_SYSCALL_H_
 
 #include "uv.h"
+#include "internal.h"
 #include <dirent.h>
 #include <poll.h>
 #include <pthread.h>
@@ -55,7 +56,6 @@ struct _epoll_list{
 int epoll_create1(int flags);
 int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
 int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);
-int epoll_pwait(int epfd, struct epoll_event *events, int maxevents, int timeout, int sigmask);
 int epoll_file_close(int fd);
 /* utility functions */
 int nanosleep(const struct timespec *req, struct timespec *rem);
@@ -63,7 +63,5 @@ int scandir(const char *maindir, struct dirent ***namelist,
             int (*filter)(const struct dirent *),
             int (*compar)(const struct dirent **,
             const struct dirent **));
-void* uv__malloc(size_t);
-void* uv__realloc(void*, size_t);
 
 #endif /* UV_OS390_SYSCALL_H_ */

@@ -231,7 +231,7 @@ skip:
 
 static ssize_t uv__fs_access(uv_fs_t * req) {
 #ifdef __MVS__
-  int r = 0;
+  int r;
 
   if (req->flags | F_OK)
     r = access(req->path, F_OK);
@@ -252,10 +252,15 @@ static ssize_t uv__fs_mkdtemp(uv_fs_t* req) {
   /* There is no mkdtemp. So instead use mktemp to generate a
      temporary file. Then delete that file and use the name
      to create a temporary directory.
+
+     TODO: (jBarz) use the following platform agnostic constructs instead
+     1) generating a random path name
+     2) creating the directory
   */
+
   while (1) {
     int fd = mkstemp(path);
-    if (fd == -1 || close(fd) || remove(path))
+    if (fd == -1 || uv__close(fd) || remove(path))
       return -1;
     
     if (mkdir(path, S_IRWXU) != 0)
