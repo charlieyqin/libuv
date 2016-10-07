@@ -100,9 +100,6 @@ int uv__platform_loop_init(uv_loop_t* loop) {
 
   fd = epoll_create1(UV__EPOLL_CLOEXEC);
 
-  if (fd != -1)
-    uv__cloexec(fd, 1);
-
   loop->backend_fd = fd;
 
   if (fd == -1)

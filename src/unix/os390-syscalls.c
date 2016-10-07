@@ -32,7 +32,9 @@
 #pragma linkage(BPX1CTW, OS)
 
 static int number_of_epolls;
-struct _epoll_list* _global_epoll_list[MAX_EPOLL_INSTANCES];
+static struct epoll_list* global_epoll_list[MAX_EPOLL_INSTANCES];
+static uv_mutex_t global_epoll_lock;
+static uv_once_t once = UV_ONCE_INIT;
 
 int scandir(const char *maindir, struct dirent ***namelist,
             int (*filter)(const struct dirent *),
@@ -88,13 +90,13 @@ static int isfdequal(const void* first, const void* second) {
 }
 
 static struct pollfd* findpfd(int epfd, int fd, int events) {
-  struct _epoll_list *lst;
+  struct epoll_list *lst;
   struct pollfd pfd;
   struct pollfd* found;
 
   pfd.fd = fd;
   pfd.events = events;
-  lst = _global_epoll_list[epfd];
+  lst = global_epoll_list[epfd];
   if (events == 0)
     return lfind(&pfd, &lst->items[0], &lst->size,
                   sizeof(pfd), isfdequal);
@@ -103,15 +105,23 @@ static struct pollfd* findpfd(int epfd, int fd, int events) {
                   sizeof(pfd), isfdequal);
 }
 
+static void epoll_init() {
+  uv_mutex_init(&global_epoll_lock);
+}
+  
 int epoll_create1(int flags) {
-  struct _epoll_list* list;
+  struct epoll_list* list;
   int index;
 
+  uv_once(&once, epoll_init);
+  uv_mutex_lock(&global_epoll_lock);
   list = uv__malloc(sizeof(*list));
-  memset(list, 0, sizeof(*list));
   index = number_of_epolls++;
-  _global_epoll_list[index] = list;
+  global_epoll_list[index] = list;
+  uv_mutex_unlock(&global_epoll_lock);
 
+  /* initialize list */
+  memset(list, 0, sizeof(*list));
   if (uv_mutex_init(&list->lock)) {
     errno = ENOLCK;
     return -1;
@@ -122,10 +132,12 @@ int epoll_create1(int flags) {
 }
 
 int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
-  struct _epoll_list *lst;
+  struct epoll_list *lst;
 
-  lst = _global_epoll_list[epfd];
+  uv_mutex_lock(&global_epoll_lock);
+  lst = global_epoll_list[epfd];
   uv_mutex_lock(&lst->lock);
+  uv_mutex_unlock(&global_epoll_lock);
 
   if(op == EPOLL_CTL_DEL) {
     struct pollfd* found;
@@ -182,13 +194,15 @@ int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
 }
 
 int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout) {
-  struct _epoll_list *lst;
+  struct epoll_list *lst;
   size_t size;
   struct pollfd* pfds;
   int pollret;
 
-  lst = _global_epoll_list[epfd];
+  uv_mutex_lock(&global_epoll_lock);
+  lst = global_epoll_list[epfd];
   uv_mutex_lock(&lst->lock);
+  uv_mutex_unlock(&global_epoll_lock);
   size = lst->size;
   pfds = lst->items;
   pollret = poll(pfds, size, timeout);
@@ -224,12 +238,13 @@ int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
 }
 
 int epoll_file_close(int fd) {
+  uv_mutex_lock(&global_epoll_lock);
   for( int i = 0; i < number_of_epolls; ++i )
   {
-    struct _epoll_list *lst;
+    struct epoll_list *lst;
     struct pollfd* found;
 
-    lst = _global_epoll_list[i];
+    lst = global_epoll_list[i];
     uv_mutex_lock(&lst->lock);
     found = findpfd(i, fd, 0);
     if (found != NULL)
@@ -239,6 +254,7 @@ int epoll_file_close(int fd) {
     uv_mutex_unlock(&lst->lock);
   }
 
+  uv_mutex_unlock(&global_epoll_lock);
   return 0;
 }
 

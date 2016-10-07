@@ -46,7 +46,7 @@ struct epoll_event {
   int fd;
 };
 
-struct _epoll_list{
+struct epoll_list{
   struct pollfd items[MAX_ITEMS_PER_EPOLL];
   unsigned long size;
   uv_mutex_t lock;
