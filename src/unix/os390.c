@@ -329,7 +329,7 @@ uint64_t uv_get_total_memory(void) {
 int uv_resident_set_memory(size_t* rss) {
   W_PSPROC buf;
 
-  memset(&buf, 0x00, sizeof(buf));
+  memset(&buf, 0, sizeof(buf));
   if (w_getpsent(0, &buf, sizeof(W_PSPROC)) == -1)
     return -EINVAL;
 
@@ -346,7 +346,7 @@ int uv_uptime(double* uptime) {
   v = getutxid(&u);
   if (v == NULL)
     return -1;
-  *uptime = difftime64( time64(&t), v->ut_tv.tv_sec);
+  *uptime = difftime64(time64(&t), v->ut_tv.tv_sec);
   return 0;
 }
 
@@ -419,7 +419,7 @@ static int uv__interface_addresses_v6(uv_interface_address_t** addresses,
   ifc.__nif6h_buffer = uv__malloc(size);;
 
   if (ioctl(sockfd, SIOCGIFCONF6, &ifc) == -1) {
-    SAVE_ERRNO(uv__close(sockfd));
+    uv__close(sockfd);
     return -errno;
   }
 
@@ -453,11 +453,10 @@ static int uv__interface_addresses_v6(uv_interface_address_t** addresses,
 
     address->name = uv__strdup(p->__nif6e_name);
 
-    if (p->__nif6e_addr.sin6_family == AF_INET6) {
+    if (p->__nif6e_addr.sin6_family == AF_INET6)
       address->address.address6 = *((struct sockaddr_in6*) &p->__nif6e_addr);
-    } else {
+    else
       address->address.address4 = *((struct sockaddr_in*) &p->__nif6e_addr);
-    }
 
     /* TODO: Retrieve netmask using SIOCGIFNETMASK ioctl */
 
@@ -586,9 +585,8 @@ int uv_interface_addresses(uv_interface_address_t** addresses, int* count) {
 void uv_free_interface_addresses(uv_interface_address_t* addresses,
                                  int count) {
   int i;
-  for (i = 0; i < count; ++i) {
+  for (i = 0; i < count; ++i)
     uv__free(addresses[i].name);
-  }
   uv__free(addresses);
 }
 
@@ -609,9 +607,8 @@ void uv__platform_invalidate_fd(uv_loop_t* loop, int fd) {
         events[i].fd = -1;
 
   /* Remove the file descriptor from the epoll. */
-  if (loop->backend_fd >= 0) {
+  if (loop->backend_fd >= 0)
     epoll_ctl(loop->backend_fd, UV__EPOLL_CTL_DEL, fd, &dummy);
-  }
 }
 
 int uv__io_check_fd(uv_loop_t* loop, int fd) {
