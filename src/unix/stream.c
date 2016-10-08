@@ -1197,10 +1197,12 @@ static void uv__read(uv_stream_t* stream) {
 
 #if defined(__MVS__)
       if (is_ipc && msg.msg_controllen > 0) {
-        uv_buf_t blankbuf = {0, 0};
+        uv_buf_t blankbuf;
         int nread;
         struct iovec *old;
 
+        blankbuf.base = 0;
+        blankbuf.len = 0;
         old = msg.msg_iov;
         msg.msg_iov = (struct iovec*) &blankbuf;
         nread = 0;

@@ -404,19 +404,23 @@ static int uv__interface_addresses_v6(uv_interface_address_t** addresses,
                                       int* count) {
   uv_interface_address_t* address;
   int sockfd;
-  int size = 16384;
+  int maxsize;
   __net_ifconf6header_t ifc;
-  __net_ifconf6entry_t *ifr, *p, flg;
+  __net_ifconf6entry_t* ifr;
+  __net_ifconf6entry_t* p;
+  __net_ifconf6entry_t flg;
 
   *count = 0;
+  /* Assume maximum buffer size allowable */
+  maxsize = 16384;
 
   if (0 > (sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP))) {
     return -errno;
   }
 
   ifc.__nif6h_version = 1;
-  ifc.__nif6h_buflen = size;
-  ifc.__nif6h_buffer = uv__malloc(size);;
+  ifc.__nif6h_buflen = maxsize;
+  ifc.__nif6h_buffer = uv__malloc(maxsize);;
 
   if (ioctl(sockfd, SIOCGIFCONF6, &ifc) == -1) {
     uv__close(sockfd);
@@ -475,7 +479,7 @@ static int uv__interface_addresses_v6(uv_interface_address_t** addresses,
 int uv_interface_addresses(uv_interface_address_t** addresses, int* count) {
   uv_interface_address_t* address;
   int sockfd;
-  int size = 16384;
+  int maxsize;
   struct ifconf ifc;
   struct ifreq flg;
   struct ifreq* ifr;
@@ -489,12 +493,15 @@ int uv_interface_addresses(uv_interface_address_t** addresses, int* count) {
   /* now get the ipv4 addresses */
   *count = 0;
 
+  /* Assume maximum buffer size allowable */
+  maxsize = 16384;
+
   sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
   if (0 > sockfd)
     return -errno;
 
-  ifc.ifc_req = uv__malloc(size);
-  ifc.ifc_len = size;
+  ifc.ifc_req = uv__malloc(maxsize);
+  ifc.ifc_len = maxsize;
   if (ioctl(sockfd, SIOCGIFCONF, &ifc) == -1) {
     SAVE_ERRNO(uv__close(sockfd));
     return -errno;

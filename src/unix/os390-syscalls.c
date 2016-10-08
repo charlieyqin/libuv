@@ -40,12 +40,15 @@ int scandir(const char *maindir, struct dirent ***namelist,
             int (*filter)(const struct dirent *),
             int (*compar)(const struct dirent **,
             const struct dirent **)) {
-  struct dirent **nl = NULL;
+  struct dirent **nl;
   struct dirent *dirent;
-  unsigned count = 0;
-  size_t allocated = 0;
+  unsigned count;
+  size_t allocated;
   DIR *mdir;
 
+  nl = NULL;
+  count = 0;
+  allocated = 0;
   mdir = opendir(maindir);
   if (!mdir)
     return -1;
@@ -83,10 +86,9 @@ int scandir(const char *maindir, struct dirent ***namelist,
   return count;
 }
 
-static int isfdequal(const void* first, const void* second) {
-  const struct pollfd* a = first;
-  const struct pollfd* b = second;
-  return a->fd == b->fd ? 0 : 1;
+static int isfdequal(const struct pollfd* first,
+                     const struct pollfd* second) {
+  return first->fd == second->fd ? 0 : 1;
 }
 
 static struct pollfd* findpfd(int epfd, int fd, int events) {
