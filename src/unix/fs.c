@@ -230,8 +230,6 @@ skip:
 }
 
 static ssize_t uv__fs_mkdtemp(uv_fs_t* req) {
-  char *path = (char*) req->path;
-
 #if defined(__MVS__)
   /* There is no mkdtemp. So instead use mktemp to generate a
      temporary file. Then delete that file and use the name
@@ -241,22 +239,35 @@ static ssize_t uv__fs_mkdtemp(uv_fs_t* req) {
      1) generating a random path name
      2) creating the directory
   */
+  char *path;
+  int rc;
+  int fd;
 
-  while (1) {
-    int fd = mkstemp(path);
+  path = uv__malloc(strlen((char*) req->path));
+  rc = -1;
+
+  while (rc == -1) {
+    strcpy(path, (char*) req->path);
+    fd = mkstemp(path);
     if (fd == -1 || uv__close(fd) || remove(path))
-      return -1;
+      break;
     
     if (mkdir(path, S_IRWXU) != 0)
       if (errno == EEXIST)
         continue;
       else
-        return -1;
+        break;
     else
-      return 0;
+      rc = 0;
   }
+  
+  if(rc == 0)
+    strcpy(req->path, path);
+
+  uv__free(path);
+  return rc;
 #else
-  return mkdtemp(path) ? 0 : -1;
+  return mkdtemp((char*) req->path) ? 0 : -1;
 #endif
 }
 
