@@ -229,6 +229,7 @@ skip:
 #endif
 }
 
+
 static ssize_t uv__fs_mkdtemp(uv_fs_t* req) {
 #if defined(__MVS__)
   /* There is no mkdtemp. So instead use mktemp to generate a
@@ -239,7 +240,7 @@ static ssize_t uv__fs_mkdtemp(uv_fs_t* req) {
      1) generating a random path name
      2) creating the directory
   */
-  char *path;
+  char* path;
   int rc;
   int fd;
 

@@ -36,15 +36,15 @@ static struct epoll_list* global_epoll_list[MAX_EPOLL_INSTANCES];
 static uv_mutex_t global_epoll_lock;
 static uv_once_t once = UV_ONCE_INIT;
 
-int scandir(const char *maindir, struct dirent ***namelist,
-            int (*filter)(const struct dirent *),
-            int (*compar)(const struct dirent **,
+int scandir(const char* maindir, struct dirent*** namelist,
+            int (*filter)(const struct dirent*),
+            int (*compar)(const struct dirent**,
             const struct dirent **)) {
-  struct dirent **nl;
-  struct dirent *dirent;
+  struct dirent** nl;
+  struct dirent* dirent;
   unsigned count;
   size_t allocated;
-  DIR *mdir;
+  DIR* mdir;
 
   nl = NULL;
   count = 0;
@@ -58,7 +58,7 @@ int scandir(const char *maindir, struct dirent ***namelist,
     if (!dirent)
       break;
     if (!filter || filter(dirent)) {
-      struct dirent *copy;
+      struct dirent* copy;
       copy = uv__malloc(sizeof(*copy));
       if (!copy) {
         while (count) {
@@ -72,13 +72,13 @@ int scandir(const char *maindir, struct dirent ***namelist,
       }
       memcpy(copy, dirent, sizeof(*copy));
 
-      nl = uv__realloc(nl, count+1);
+      nl = uv__realloc(nl, sizeof(*copy) * (count + 1));
       nl[count++] = copy;
     }
   }
 
   qsort(nl, count, sizeof(struct dirent *),
-       (int (*)(const void *, const void *))compar);
+       (int (*)(const void *, const void *)) compar);
 
   closedir(mdir);
 
@@ -86,31 +86,40 @@ int scandir(const char *maindir, struct dirent ***namelist,
   return count;
 }
 
+
 static int isfdequal(const struct pollfd* first,
                      const struct pollfd* second) {
   return first->fd == second->fd ? 0 : 1;
 }
 
-static struct pollfd* findpfd(int epfd, int fd, int events) {
-  struct epoll_list *lst;
+
+static struct pollfd* accessPfd(int epfd, int fd, int events) {
+  struct epoll_list* lst;
   struct pollfd pfd;
   struct pollfd* found;
 
+  uv_mutex_lock(&global_epoll_lock);
   pfd.fd = fd;
   pfd.events = events;
   lst = global_epoll_list[epfd];
   if (events == 0)
-    return lfind(&pfd, &lst->items[0], &lst->size,
+    found = lfind(&pfd, &lst->items[0], &lst->size,
                   sizeof(pfd), isfdequal);
   else
-    return lsearch(&pfd, &lst->items[0], &lst->size,
+    found = lsearch(&pfd, &lst->items[0], &lst->size,
                   sizeof(pfd), isfdequal);
+
+  uv_mutex_unlock(&global_epoll_lock);
+  return found;
 }
 
+
 static void epoll_init() {
-  uv_mutex_init(&global_epoll_lock);
+  if (uv_mutex_init(&global_epoll_lock))
+    abort();
 }
-  
+
+
 int epoll_create1(int flags) {
   struct epoll_list* list;
   int index;
@@ -124,100 +133,84 @@ int epoll_create1(int flags) {
 
   /* initialize list */
   memset(list, 0, sizeof(*list));
-  if (uv_mutex_init(&list->lock)) {
-    errno = ENOLCK;
-    return -1;
-  }
-
   list->size = 0;
   return index; 
 }
 
+
 int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
-  struct epoll_list *lst;
+  struct epoll_list* lst;
 
   uv_mutex_lock(&global_epoll_lock);
   lst = global_epoll_list[epfd];
-  uv_mutex_lock(&lst->lock);
   uv_mutex_unlock(&global_epoll_lock);
 
   if(op == EPOLL_CTL_DEL) {
     struct pollfd* found;
 
-    found = findpfd(epfd, fd, 0); 
-    if (found != NULL)
-      memcpy(found,
-             found+1,
-             (&lst->items[lst->size--] - found - 1) * sizeof(*found));
-    uv_mutex_unlock(&lst->lock);
-
+    found = accessPfd(epfd, fd, 0); 
     if (found == NULL)
       return ENOENT;
 
-  }
-  else if(op == EPOLL_CTL_ADD) {
+    memcpy(found,
+           found+1,
+           (&lst->items[lst->size--] - found - 1) * sizeof(*found));
+
+  } else if(op == EPOLL_CTL_ADD) {
     struct pollfd* found;
     size_t before;
     size_t after;
 
-    if (lst->size == MAX_ITEMS_PER_EPOLL - 1) {
-      uv_mutex_unlock(&lst->lock);
+    if (lst->size == MAX_ITEMS_PER_EPOLL - 1)
       return ENOMEM;
-    }
 
     before = lst->size; 
-    found = findpfd(epfd, fd, event->events);
+    found = accessPfd(epfd, fd, event->events);
     after = lst->size; 
-    uv_mutex_unlock(&lst->lock);
 
     if (found != NULL && before == after) {
       errno = EEXIST;
       return -1;
     }
-
-  }
-  else if(op == EPOLL_CTL_MOD) {
+  } else if(op == EPOLL_CTL_MOD) {
     struct pollfd* found;
 
-    found = findpfd(epfd, fd, 0);
+    found = accessPfd(epfd, fd, 0);
     if (found != NULL)
       found->events = event->events;
     
-    uv_mutex_unlock(&lst->lock);
     if (found == NULL) {
       errno = ENOENT;
       return -1;
     }
-  }
-  else {
+  } else
     abort();
-  }
+
   return 0;
 }
 
-int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout) {
-  struct epoll_list *lst;
+
+int epoll_wait(int epfd, struct epoll_event* events, int maxevents, int timeout) {
+  struct epoll_list* lst;
   size_t size;
   struct pollfd* pfds;
   int pollret;
+  int reventcount;
 
   uv_mutex_lock(&global_epoll_lock);
   lst = global_epoll_list[epfd];
-  uv_mutex_lock(&lst->lock);
   uv_mutex_unlock(&global_epoll_lock);
   size = lst->size;
   pfds = lst->items;
   pollret = poll(pfds, size, timeout);
-  if(pollret == -1) {
-    uv_mutex_unlock(&lst->lock);
+  if(pollret == -1)
     return pollret;
-  }
 
-  int reventcount=0;
-  size_t realsize = lst->size;
-  for (int i = 0; i < realsize && i < maxevents; ++i)                     
-  {
-    struct epoll_event ev = { 0, 0 };
+  reventcount = 0;
+  for (int i = 0; i < lst->size && i < maxevents; ++i) {
+    struct epoll_event ev;
+
+    ev.events = 0;
     ev.fd = pfds[i].fd;
     if(!pfds[i].revents)
       continue;
@@ -235,30 +228,28 @@ int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
     events[reventcount++] = ev; 
   }
 
-  uv_mutex_unlock(&lst->lock);
   return reventcount;
 }
 
+
 int epoll_file_close(int fd) {
   uv_mutex_lock(&global_epoll_lock);
-  for( int i = 0; i < number_of_epolls; ++i )
-  {
-    struct epoll_list *lst;
+  for(int i = 0; i < number_of_epolls; ++i) {
+    struct epoll_list* lst;
     struct pollfd* found;
 
     lst = global_epoll_list[i];
-    uv_mutex_lock(&lst->lock);
-    found = findpfd(i, fd, 0);
+    found = accessPfd(i, fd, 0);
     if (found != NULL)
       memcpy(found,
              found+1,
              (&lst->items[lst->size--] - found - 1) * sizeof(*found));
-    uv_mutex_unlock(&lst->lock);
   }
 
   uv_mutex_unlock(&global_epoll_lock);
   return 0;
 }
+
 
 int nanosleep(const struct timespec* req, struct timespec* rem) {
   unsigned nano;

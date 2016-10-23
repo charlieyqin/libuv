@@ -88,12 +88,14 @@ typedef union {
   char* deref;
 } data_area_ptr; 
 
+
 void uv_loadavg(double avg[3]) {
   /* TODO: implement the following */
   avg[0] = 0;
   avg[1] = 0;
   avg[2] = 0;
 }
+
 
 int uv__platform_loop_init(uv_loop_t* loop) {
   int fd;
@@ -108,15 +110,18 @@ int uv__platform_loop_init(uv_loop_t* loop) {
   return 0;
 }
 
+
 void uv__platform_loop_delete(uv_loop_t* loop) {
   loop->backend_fd = -1;
 }
+
 
 uint64_t uv__hrtime(uv_clocktype_t type) {
   struct timeval time;
   gettimeofday(&time, NULL);
   return (uint64_t) time.tv_sec * 1e9 + time.tv_usec * 1e3;
 }
+
 
 /*  
     Get the exe path using the thread entry information
@@ -200,7 +205,7 @@ static int getexe(const int pid, char* buf, size_t len) {
   }
 
   /* Check highest byte to ensure data availability */
-  assert( ((Output_buf.Output_data.offsetPath >>24) & 0xFF) == 'A');
+  assert(((Output_buf.Output_data.offsetPath >>24) & 0xFF) == 'A');
 
   /* Get the offset from the lowest 3 bytes */
   Output_path = (char*)(&Output_buf) + 
@@ -215,6 +220,7 @@ static int getexe(const int pid, char* buf, size_t len) {
 
   return 0;
 }
+
 
 /*
  * We could use a static buffer for the path manipulations that we need outside
@@ -304,6 +310,7 @@ int uv_exepath(char* buffer, size_t* size) {
   }
 }
 
+
 uint64_t uv_get_free_memory(void) {
   uint64_t freeram;
 
@@ -314,6 +321,7 @@ uint64_t uv_get_free_memory(void) {
   freeram = *((uint64_t*)(rcep.deref + RCEAFC_OFFSET)) * 4;
   return freeram;
 }
+
 
 uint64_t uv_get_total_memory(void) {
   uint64_t totalram;
@@ -326,6 +334,7 @@ uint64_t uv_get_total_memory(void) {
   return totalram;
 }
 
+
 int uv_resident_set_memory(size_t* rss) {
   W_PSPROC buf;
 
@@ -336,6 +345,7 @@ int uv_resident_set_memory(size_t* rss) {
   *rss = buf.ps_size;
   return 0;
 }
+
 
 int uv_uptime(double* uptime) {
   struct utmpx u ;
@@ -349,6 +359,7 @@ int uv_uptime(double* uptime) {
   *uptime = difftime64(time64(&t), v->ut_tv.tv_sec);
   return 0;
 }
+
 
 int uv_cpu_info(uv_cpu_info_t** cpu_infos, int* count) {
   uv_cpu_info_t* cpu_info;
@@ -394,11 +405,13 @@ int uv_cpu_info(uv_cpu_info_t** cpu_infos, int* count) {
   return 0;
 }
 
+
 void uv_free_cpu_info(uv_cpu_info_t* cpu_infos, int count) {
   for (int i = 0; i < count; ++i)
     uv__free(cpu_infos[i].model);
   uv__free(cpu_infos);
 }
+
 
 static int uv__interface_addresses_v6(uv_interface_address_t** addresses,
                                       int* count) {
@@ -414,9 +427,8 @@ static int uv__interface_addresses_v6(uv_interface_address_t** addresses,
   /* Assume maximum buffer size allowable */
   maxsize = 16384;
 
-  if (0 > (sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP))) {
+  if (0 > (sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP)))
     return -errno;
-  }
 
   ifc.__nif6h_version = 1;
   ifc.__nif6h_buflen = maxsize;
@@ -476,6 +488,7 @@ static int uv__interface_addresses_v6(uv_interface_address_t** addresses,
   return 0;
 }
 
+
 int uv_interface_addresses(uv_interface_address_t** addresses, int* count) {
   uv_interface_address_t* address;
   int sockfd;
@@ -503,7 +516,7 @@ int uv_interface_addresses(uv_interface_address_t** addresses, int* count) {
   ifc.ifc_req = uv__malloc(maxsize);
   ifc.ifc_len = maxsize;
   if (ioctl(sockfd, SIOCGIFCONF, &ifc) == -1) {
-    SAVE_ERRNO(uv__close(sockfd));
+    uv__close(sockfd);
     return -errno;
   }
 
@@ -547,7 +560,7 @@ int uv_interface_addresses(uv_interface_address_t** addresses, int* count) {
   memcpy(address, addresses_v6, count_v6 * sizeof(uv_interface_address_t));
   address += count_v6;
   *count += count_v6;
-  free(addresses_v6);
+  uv__free(addresses_v6);
 
   ifr = ifc.ifc_req;
   while ((char*)ifr < (char*)ifc.ifc_req + ifc.ifc_len) {
@@ -589,6 +602,7 @@ int uv_interface_addresses(uv_interface_address_t** addresses, int* count) {
   return 0;
 }
 
+
 void uv_free_interface_addresses(uv_interface_address_t* addresses,
                                  int count) {
   int i;
@@ -596,6 +610,7 @@ void uv_free_interface_addresses(uv_interface_address_t* addresses,
     uv__free(addresses[i].name);
   uv__free(addresses);
 }
+
 
 void uv__platform_invalidate_fd(uv_loop_t* loop, int fd) {
   struct epoll_event* events;
@@ -618,6 +633,7 @@ void uv__platform_invalidate_fd(uv_loop_t* loop, int fd) {
     epoll_ctl(loop->backend_fd, UV__EPOLL_CTL_DEL, fd, &dummy);
 }
 
+
 int uv__io_check_fd(uv_loop_t* loop, int fd) {
   struct pollfd p[1];
   int rv;
@@ -638,22 +654,27 @@ int uv__io_check_fd(uv_loop_t* loop, int fd) {
   return 0;
 }
 
+
 void uv__fs_event_close(uv_fs_event_t* handle) {
   UNREACHABLE();
 }
 
+
 int uv_fs_event_init(uv_loop_t* loop, uv_fs_event_t* handle) {
   return -ENOSYS;
 }
+
 
 int uv_fs_event_start(uv_fs_event_t* handle, uv_fs_event_cb cb,
                       const char* filename, unsigned int flags) {
   return -ENOSYS;
 }
 
+
 int uv_fs_event_stop(uv_fs_event_t* handle) {
   return -ENOSYS;
 }
+
 
 void uv__io_poll(uv_loop_t* loop, int timeout) {
   static const int max_safe_timeout = 1789569;
@@ -665,7 +686,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
   uv__io_t* w;
   uint64_t base;
   int count;
-  int nfds=0;
+  int nfds;
   int fd;
   int op;
   int i;
@@ -721,6 +742,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
   real_timeout = timeout;
   int nevents = 0;
 
+  nfds = 0;
   for (;;) {
     if (sizeof(int32_t) == sizeof(long) && timeout >= max_safe_timeout)
       timeout = max_safe_timeout;
@@ -828,6 +850,7 @@ update_timeout:
     timeout = real_timeout;
   }
 }
+
 
 void uv__set_process_title(const char* title) {
 }

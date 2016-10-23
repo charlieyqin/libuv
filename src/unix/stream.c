@@ -1214,7 +1214,7 @@ static void uv__read(uv_stream_t* stream) {
             msg.msg_iov = old;
             return;
           }
-        } while ( nread == 0 && msg.msg_controllen > 0 );
+        } while (nread == 0 && msg.msg_controllen > 0);
         msg.msg_iov = old;
       }
 #endif

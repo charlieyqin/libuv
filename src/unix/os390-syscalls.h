@@ -49,7 +49,6 @@ struct epoll_event {
 struct epoll_list{
   struct pollfd items[MAX_ITEMS_PER_EPOLL];
   unsigned long size;
-  uv_mutex_t lock;
 };
 
 /* epoll api */
@@ -57,9 +56,10 @@ int epoll_create1(int flags);
 int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
 int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);
 int epoll_file_close(int fd);
+
 /* utility functions */
-int nanosleep(const struct timespec *req, struct timespec *rem);
-int scandir(const char *maindir, struct dirent ***namelist,
+int nanosleep(const struct timespec* req, struct timespec* rem);
+int scandir(const char* maindir, struct dirent*** namelist,
             int (*filter)(const struct dirent *),
             int (*compar)(const struct dirent **,
             const struct dirent **));
