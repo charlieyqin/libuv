@@ -98,13 +98,11 @@ void uv_loadavg(double avg[3]) {
 
 
 int uv__platform_loop_init(uv_loop_t* loop) {
-  int fd;
+  uv__os390_epoll* ep;
 
-  fd = epoll_create1(UV__EPOLL_CLOEXEC);
-
-  loop->backend_fd = fd;
-
-  if (fd == -1)
+  ep = epoll_create1(UV__EPOLL_CLOEXEC);
+  loop->ep = ep;
+  if (ep == NULL)
     return -errno;
 
   return 0;
@@ -112,7 +110,8 @@ int uv__platform_loop_init(uv_loop_t* loop) {
 
 
 void uv__platform_loop_delete(uv_loop_t* loop) {
-  loop->backend_fd = -1;
+  if (loop->ep != NULL)
+    loop->ep = NULL;
 }
 
 
@@ -629,8 +628,8 @@ void uv__platform_invalidate_fd(uv_loop_t* loop, int fd) {
         events[i].fd = -1;
 
   /* Remove the file descriptor from the epoll. */
-  if (loop->backend_fd >= 0)
-    epoll_ctl(loop->backend_fd, UV__EPOLL_CTL_DEL, fd, &dummy);
+  if (loop->ep != NULL)
+    epoll_ctl(loop->ep, UV__EPOLL_CTL_DEL, fd, &dummy);
 }
 
 
@@ -722,14 +721,14 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     /* XXX Future optimization: do EPOLL_CTL_MOD lazily if we stop watching
      * events, skip the syscall and squelch the events after epoll_wait().
      */
-    if (epoll_ctl(loop->backend_fd, op, w->fd, &e)) {
+    if (epoll_ctl(loop->ep, op, w->fd, &e)) {
       if (errno != EEXIST)
         abort();
 
       assert(op == UV__EPOLL_CTL_ADD);
 
       /* We've reactivated a file descriptor that's been watched before. */
-      if (epoll_ctl(loop->backend_fd, UV__EPOLL_CTL_MOD, w->fd, &e))
+      if (epoll_ctl(loop->ep, UV__EPOLL_CTL_MOD, w->fd, &e))
         abort();
     }
 
@@ -747,7 +746,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     if (sizeof(int32_t) == sizeof(long) && timeout >= max_safe_timeout)
       timeout = max_safe_timeout;
 
-    nfds = epoll_wait(loop->backend_fd, events,
+    nfds = epoll_wait(loop->ep, events,
                       ARRAY_SIZE(events), timeout);
 
     /* Update loop->time unconditionally. It's tempting to skip the update when
@@ -803,7 +802,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
          * Ignore all errors because we may be racing with another thread
          * when the file descriptor is closed.
          */
-        epoll_ctl(loop->backend_fd, UV__EPOLL_CTL_DEL, fd, pe);
+        epoll_ctl(loop->ep, UV__EPOLL_CTL_DEL, fd, pe);
         continue;
       }
 

@@ -46,15 +46,16 @@ struct epoll_event {
   int fd;
 };
 
-struct epoll_list{
+typedef struct {
+  QUEUE member;
   struct pollfd items[MAX_ITEMS_PER_EPOLL];
   unsigned long size;
-};
+} uv__os390_epoll;
 
 /* epoll api */
-int epoll_create1(int flags);
-int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
-int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);
+uv__os390_epoll* epoll_create1(int flags);
+int epoll_ctl(uv__os390_epoll* ep, int op, int fd, struct epoll_event *event);
+int epoll_wait(uv__os390_epoll* ep, struct epoll_event *events, int maxevents, int timeout);
 int epoll_file_close(int fd);
 
 /* utility functions */

@@ -32,7 +32,7 @@
 #pragma linkage(BPX1CTW, OS)
 
 static int number_of_epolls;
-static struct epoll_list* global_epoll_list[MAX_EPOLL_INSTANCES];
+static QUEUE global_epoll_queue;
 static uv_mutex_t global_epoll_lock;
 static uv_once_t once = UV_ONCE_INIT;
 
@@ -93,20 +93,18 @@ static int isfdequal(const struct pollfd* first,
 }
 
 
-static struct pollfd* accessPfd(int epfd, int fd, int events) {
-  struct epoll_list* lst;
+static struct pollfd* accessPfd(uv__os390_epoll* ep, int fd, int events) {
   struct pollfd pfd;
   struct pollfd* found;
 
   uv_mutex_lock(&global_epoll_lock);
   pfd.fd = fd;
   pfd.events = events;
-  lst = global_epoll_list[epfd];
   if (events == 0)
-    found = lfind(&pfd, &lst->items[0], &lst->size,
+    found = lfind(&pfd, &ep->items[0], &ep->size,
                   sizeof(pfd), isfdequal);
   else
-    found = lsearch(&pfd, &lst->items[0], &lst->size,
+    found = lsearch(&pfd, &ep->items[0], &ep->size,
                   sizeof(pfd), isfdequal);
 
   uv_mutex_unlock(&global_epoll_lock);
@@ -115,40 +113,37 @@ static struct pollfd* accessPfd(int epfd, int fd, int events) {
 
 
 static void epoll_init() {
+  QUEUE_INIT(&global_epoll_queue);
   if (uv_mutex_init(&global_epoll_lock))
     abort();
 }
 
 
-int epoll_create1(int flags) {
-  struct epoll_list* list;
-  int index;
+uv__os390_epoll* epoll_create1(int flags) {
+  uv__os390_epoll* lst;
 
   uv_once(&once, epoll_init);
   uv_mutex_lock(&global_epoll_lock);
-  list = uv__malloc(sizeof(*list));
-  index = number_of_epolls++;
-  global_epoll_list[index] = list;
+  lst = uv__malloc(sizeof(*lst));
+  if (lst == -1)
+    return NULL;
+  QUEUE_INSERT_TAIL(&global_epoll_queue, &lst->member);
   uv_mutex_unlock(&global_epoll_lock);
 
   /* initialize list */
-  memset(list, 0, sizeof(*list));
-  list->size = 0;
-  return index; 
+  memset(lst, 0, sizeof(*lst));
+  QUEUE_INIT(&lst->member);
+  lst->size = 0;
+  return lst; 
 }
 
 
-int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
-  struct epoll_list* lst;
-
-  uv_mutex_lock(&global_epoll_lock);
-  lst = global_epoll_list[epfd];
-  uv_mutex_unlock(&global_epoll_lock);
-
+int epoll_ctl(uv__os390_epoll* lst, int op, int fd, 
+              struct epoll_event *event) {
   if(op == EPOLL_CTL_DEL) {
     struct pollfd* found;
 
-    found = accessPfd(epfd, fd, 0); 
+    found = accessPfd(lst, fd, 0); 
     if (found == NULL)
       return ENOENT;
 
@@ -165,7 +160,7 @@ int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
       return ENOMEM;
 
     before = lst->size; 
-    found = accessPfd(epfd, fd, event->events);
+    found = accessPfd(lst, fd, event->events);
     after = lst->size; 
 
     if (found != NULL && before == after) {
@@ -175,7 +170,7 @@ int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
   } else if(op == EPOLL_CTL_MOD) {
     struct pollfd* found;
 
-    found = accessPfd(epfd, fd, 0);
+    found = accessPfd(lst, fd, 0);
     if (found != NULL)
       found->events = event->events;
     
@@ -190,15 +185,14 @@ int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
 }
 
 
-int epoll_wait(int epfd, struct epoll_event* events, int maxevents, int timeout) {
-  struct epoll_list* lst;
+int epoll_wait(uv__os390_epoll* lst, struct epoll_event* events,
+               int maxevents, int timeout) {
   size_t size;
   struct pollfd* pfds;
   int pollret;
   int reventcount;
 
   uv_mutex_lock(&global_epoll_lock);
-  lst = global_epoll_list[epfd];
   uv_mutex_unlock(&global_epoll_lock);
   size = lst->size;
   pfds = lst->items;
@@ -233,13 +227,15 @@ int epoll_wait(int epfd, struct epoll_event* events, int maxevents, int timeout)
 
 
 int epoll_file_close(int fd) {
+  QUEUE* q;
+
   uv_mutex_lock(&global_epoll_lock);
-  for(int i = 0; i < number_of_epolls; ++i) {
-    struct epoll_list* lst;
+  QUEUE_FOREACH(q, &global_epoll_queue) {
+    uv__os390_epoll* lst;
     struct pollfd* found;
 
-    lst = global_epoll_list[i];
-    found = accessPfd(i, fd, 0);
+    lst = QUEUE_DATA(q, uv__os390_epoll, member);
+    found = accessPfd(lst, fd, 0);
     if (found != NULL)
       memcpy(found,
              found+1,
@@ -249,7 +245,6 @@ int epoll_file_close(int fd) {
   uv_mutex_unlock(&global_epoll_lock);
   return 0;
 }
-
 
 int nanosleep(const struct timespec* req, struct timespec* rem) {
   unsigned nano;
