@@ -87,28 +87,36 @@ int scandir(const char* maindir, struct dirent*** namelist,
 }
 
 
-static int isfdequal(const struct pollfd* first,
-                     const struct pollfd* second) {
-  return first->fd == second->fd ? 0 : 1;
+static unsigned int next_power_of_two(unsigned int val) {
+  val -= 1;
+  val |= val >> 1;
+  val |= val >> 2;
+  val |= val >> 4;
+  val |= val >> 8;
+  val |= val >> 16;
+  val += 1;
+  return val;
 }
 
 
-static struct pollfd* accessPfd(uv__os390_epoll* ep, int fd, int events) {
-  struct pollfd pfd;
-  struct pollfd* found;
+static void maybe_resize(uv__os390_epoll* lst, unsigned int len) {
+  unsigned int newsize;
+  unsigned int i;
+  struct pollfd* newlst;
 
-  uv_mutex_lock(&global_epoll_lock);
-  pfd.fd = fd;
-  pfd.events = events;
-  if (events == 0)
-    found = lfind(&pfd, &ep->items[0], &ep->size,
-                  sizeof(pfd), isfdequal);
-  else
-    found = lsearch(&pfd, &ep->items[0], &ep->size,
-                  sizeof(pfd), isfdequal);
+  if (len <= lst->size)
+    return;
 
-  uv_mutex_unlock(&global_epoll_lock);
-  return found;
+  newsize = next_power_of_two(len);
+  newlst = uv__realloc(lst->items, newsize * sizeof(lst->items[0]));
+
+  if (newlst == NULL)
+    abort();
+  for (i = lst->size; i < newsize; ++i)
+    newlst[i].fd = -1;
+
+  lst->items = newlst;
+  lst->size = newsize;
 }
 
 
@@ -139,44 +147,27 @@ uv__os390_epoll* epoll_create1(int flags) {
 
 int epoll_ctl(uv__os390_epoll* lst, int op, int fd, 
               struct epoll_event *event) {
+
   if(op == EPOLL_CTL_DEL) {
-    struct pollfd* found;
-
-    found = accessPfd(lst, fd, 0); 
-    if (found == NULL)
-      return ENOENT;
-
-    memcpy(found,
-           found+1,
-           (&lst->items[lst->size--] - found - 1) * sizeof(*found));
-
-  } else if(op == EPOLL_CTL_ADD) {
-    struct pollfd* found;
-    size_t before;
-    size_t after;
-
-    if (lst->size == MAX_ITEMS_PER_EPOLL - 1)
-      return ENOMEM;
-
-    before = lst->size; 
-    found = accessPfd(lst, fd, event->events);
-    after = lst->size; 
-
-    if (found != NULL && before == after) {
-      errno = EEXIST;
-      return -1;
-    }
-  } else if(op == EPOLL_CTL_MOD) {
-    struct pollfd* found;
-
-    found = accessPfd(lst, fd, 0);
-    if (found != NULL)
-      found->events = event->events;
-    
-    if (found == NULL) {
+    if (fd >= lst->size || lst->items[fd].fd == -1) {
       errno = ENOENT;
       return -1;
     }
+    lst->items[fd].fd = -1;
+  } else if(op == EPOLL_CTL_ADD) {
+    maybe_resize(lst, fd + 1);
+    if (lst->items[fd].fd != -1) {
+      errno = EEXIST;
+      return -1;
+    }
+    lst->items[fd].fd = fd;
+    lst->items[fd].events = event->events;
+  } else if(op == EPOLL_CTL_MOD) {
+    if (fd >= lst->size || lst->items[fd].fd == -1) {
+      errno = ENOENT;
+      return -1;
+    }
+    lst->items[fd].events = event->events;
   } else
     abort();
 
@@ -231,14 +222,10 @@ int epoll_file_close(int fd) {
   uv_mutex_lock(&global_epoll_lock);
   QUEUE_FOREACH(q, &global_epoll_queue) {
     uv__os390_epoll* lst;
-    struct pollfd* found;
 
     lst = QUEUE_DATA(q, uv__os390_epoll, member);
-    found = accessPfd(lst, fd, 0);
-    if (found != NULL)
-      memcpy(found,
-             found+1,
-             (&lst->items[lst->size--] - found - 1) * sizeof(*found));
+    if (lst->items[fd].fd != -1)
+      lst->items[fd].fd = -1;
   }
 
   uv_mutex_unlock(&global_epoll_lock);
@@ -246,7 +233,10 @@ int epoll_file_close(int fd) {
 }
 
 void epoll_queue_close(uv__os390_epoll* lst) {
+  uv_mutex_lock(&global_epoll_lock);
   QUEUE_REMOVE(&lst->member);
+  uv_mutex_unlock(&global_epoll_lock);
+  uv__free(lst->items);
 }
 
 

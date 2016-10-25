@@ -48,7 +48,7 @@ struct epoll_event {
 
 typedef struct {
   QUEUE member;
-  struct pollfd items[MAX_ITEMS_PER_EPOLL];
+  struct pollfd* items;
   unsigned long size;
 } uv__os390_epoll;
 
