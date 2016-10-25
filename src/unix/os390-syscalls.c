@@ -131,9 +131,8 @@ uv__os390_epoll* epoll_create1(int flags) {
   uv_mutex_unlock(&global_epoll_lock);
 
   /* initialize list */
-  memset(lst, 0, sizeof(*lst));
-  QUEUE_INIT(&lst->member);
   lst->size = 0;
+  lst->items = NULL;
   return lst; 
 }
 
@@ -245,6 +244,11 @@ int epoll_file_close(int fd) {
   uv_mutex_unlock(&global_epoll_lock);
   return 0;
 }
+
+void epoll_queue_close(uv__os390_epoll* lst) {
+  QUEUE_REMOVE(&lst->member);
+}
+
 
 int nanosleep(const struct timespec* req, struct timespec* rem) {
   unsigned nano;

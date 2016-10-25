@@ -110,8 +110,10 @@ int uv__platform_loop_init(uv_loop_t* loop) {
 
 
 void uv__platform_loop_delete(uv_loop_t* loop) {
-  if (loop->ep != NULL)
+  if (loop->ep != NULL) {
+    epoll_queue_close(loop->ep);
     loop->ep = NULL;
+  }
 }
 
 
