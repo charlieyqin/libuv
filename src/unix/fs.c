@@ -246,28 +246,67 @@ skip:
 
 
 static ssize_t uv__fs_mkdtemp(uv_fs_t* req) {
-  char *path = (char*) req->path;
-
 #if defined(__MVS__)
   /* There is no mkdtemp. So instead use mktemp to generate a
      temporary file. Then delete that file and use the name
      to create a temporary directory.
   */
-  while (1) {
-    int fd = mkstemp(path);
-    if (fd == -1 || close(fd) || remove(path))
-      return -1;
-    
-    if (mkdir(path, S_IRWXU) != 0)
-      if (errno == EEXIST)
-        continue;
-      else
-        return -1;
-    else
-      return 0;
+  char *path = (char*) req->path;
+  static const char* tempchars =
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  static const size_t num_chars = 62;
+  static const size_t num_x = 6;
+  char *ep, *cp;
+  unsigned int tries, i;
+  size_t len;
+  uint64_t v;
+  FILE *finput;
+  int retval;
+  int saved_errno;
+
+  len = strlen(path);
+  ep = path + len;
+  if (len < num_x || strncmp(ep - num_x, "XXXXXX", num_x)) {
+    errno = EINVAL;
+    return -1;
   }
+
+  finput = fopen("/dev/urandom", "r");
+  if (finput == NULL)
+    return -1;
+
+  tries = TMP_MAX;
+  retval = -1;
+  do {
+    if (fread(&v, 1, sizeof(v), finput) != sizeof(v))
+      break;
+
+    cp = ep - num_x;
+    for (i = 0; i < num_x; i++) {
+      *cp++ = tempchars[v % num_chars];
+      v /= num_chars;
+    }
+
+    if (mkdir(path, S_IRWXU) == 0) {
+      retval = 0;
+      break;
+    }
+    else if (errno != EEXIST)
+      break;
+  } while (--tries);
+
+  saved_errno = errno;
+  fclose(finput);
+  if (tries == 0) {
+    errno = EEXIST;
+    return -1;
+  }
+
+  if (retval == -1)
+    errno = saved_errno;
+  return retval;
 #else
-  return mkdtemp(path) ? 0 : -1;
+  return mkdtemp((char*) req->path) ? 0 : -1;
 #endif
 }
 
