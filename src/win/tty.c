@@ -56,6 +56,7 @@
 #define ANSI_BACKSLASH_SEEN   0x80
 
 #define MAX_INPUT_BUFFER_LENGTH 8192
+#define MAX_CONSOLE_CHAR 8192
 
 #ifndef ENABLE_VIRTUAL_TERMINAL_PROCESSING
 #define ENABLE_VIRTUAL_TERMINAL_PROCESSING 0x0004
@@ -111,7 +112,11 @@ static int uv_tty_virtual_offset = -1;
 static int uv_tty_virtual_height = -1;
 static int uv_tty_virtual_width = -1;
 
-static CRITICAL_SECTION uv_tty_output_lock;
+/* We use a semaphore rather than a mutex or critical section because in some
+   cases (uv__cancel_read_console) we need take the lock in the main thread and
+   release it in another thread. Using a semaphore ensures that in such
+   scenario the main thread will still block when trying to acquire the lock. */
+static uv_sem_t uv_tty_output_lock;
 
 static HANDLE uv_tty_output_handle = INVALID_HANDLE_VALUE;
 
@@ -134,7 +139,8 @@ static uv_vtermstate_t uv__vterm_state = UV_UNCHECKED;
 static void uv__determine_vterm_state(HANDLE handle);
 
 void uv_console_init() {
-  InitializeCriticalSection(&uv_tty_output_lock);
+  if (uv_sem_init(&uv_tty_output_lock, 1))
+    abort();
 }
 
 
@@ -172,7 +178,7 @@ int uv_tty_init(uv_loop_t* loop, uv_tty_t* tty, uv_file fd, int readable) {
 
     /* Obtain the the tty_output_lock because the virtual window state is */
     /* shared between all uv_tty_t handles. */
-    EnterCriticalSection(&uv_tty_output_lock);
+    uv_sem_wait(&uv_tty_output_lock);
 
     if (uv__vterm_state == UV_UNCHECKED)
       uv__determine_vterm_state(handle);
@@ -187,7 +193,7 @@ int uv_tty_init(uv_loop_t* loop, uv_tty_t* tty, uv_file fd, int readable) {
 
     uv_tty_update_virtual_window(&screen_buffer_info);
 
-    LeaveCriticalSection(&uv_tty_output_lock);
+    uv_sem_post(&uv_tty_output_lock);
   }
 
 
@@ -315,10 +321,6 @@ int uv_tty_set_mode(uv_tty_t* tty, uv_tty_mode_t mode) {
       return UV_EINVAL;
   }
 
-  if (!SetConsoleMode(tty->handle, flags)) {
-    return uv_translate_sys_error(GetLastError());
-  }
-
   /* If currently reading, stop, and restart reading. */
   if (tty->flags & UV_HANDLE_READING) {
     was_reading = 1;
@@ -331,6 +333,14 @@ int uv_tty_set_mode(uv_tty_t* tty, uv_tty_mode_t mode) {
   } else {
     was_reading = 0;
   }
+
+  uv_sem_wait(&uv_tty_output_lock);
+  if (!SetConsoleMode(tty->handle, flags)) {
+    err = uv_translate_sys_error(GetLastError());
+    uv_sem_post(&uv_tty_output_lock);
+    return err;
+  }
+  uv_sem_post(&uv_tty_output_lock);
 
   /* Update flag. */
   tty->flags &= ~UV_HANDLE_TTY_RAW;
@@ -361,9 +371,9 @@ int uv_tty_get_winsize(uv_tty_t* tty, int* width, int* height) {
     return uv_translate_sys_error(GetLastError());
   }
 
-  EnterCriticalSection(&uv_tty_output_lock);
+  uv_sem_wait(&uv_tty_output_lock);
   uv_tty_update_virtual_window(&info);
-  LeaveCriticalSection(&uv_tty_output_lock);
+  uv_sem_post(&uv_tty_output_lock);
 
   *width = uv_tty_virtual_width;
   *height = uv_tty_virtual_height;
@@ -432,6 +442,7 @@ static DWORD CALLBACK uv_tty_line_read_thread(void* data) {
   DWORD chars, read_chars;
   LONG status;
   COORD pos;
+  BOOL read_console_success;
 
   assert(data);
 
@@ -461,11 +472,13 @@ static DWORD CALLBACK uv_tty_line_read_thread(void* data) {
     return 0;
   }
 
-  if (ReadConsoleW(handle->handle,
-                   (void*) utf16,
-                   chars,
-                   &read_chars,
-                   NULL)) {
+  read_console_success = ReadConsoleW(handle->handle,
+                                      (void*) utf16,
+                                      chars,
+                                      &read_chars,
+                                      NULL);
+
+  if (read_console_success) {
     read_bytes = WideCharToMultiByte(CP_UTF8,
                                      0,
                                      utf16,
@@ -480,33 +493,36 @@ static DWORD CALLBACK uv_tty_line_read_thread(void* data) {
     SET_REQ_ERROR(req, GetLastError());
   }
 
-  InterlockedExchange(&uv__read_console_status, COMPLETED);
+  status = InterlockedExchange(&uv__read_console_status, COMPLETED);
 
-  /* If we canceled the read by sending a VK_RETURN event, restore the screen
-     state to undo the visual effect of the VK_RETURN*/
-  if (InterlockedOr(&uv__restore_screen_state, 0)) {
-    HANDLE active_screen_buffer = CreateFileA("conout$",
+  if (status ==  TRAP_REQUESTED) {
+    /* If we canceled the read by sending a VK_RETURN event, restore the
+       screen state to undo the visual effect of the VK_RETURN */
+    if (read_console_success && InterlockedOr(&uv__restore_screen_state, 0)) {
+      HANDLE active_screen_buffer;
+      active_screen_buffer = CreateFileA("conout$",
                                          GENERIC_READ | GENERIC_WRITE,
                                          FILE_SHARE_READ | FILE_SHARE_WRITE,
                                          NULL,
                                          OPEN_EXISTING,
                                          FILE_ATTRIBUTE_NORMAL,
                                          NULL);
-    if (active_screen_buffer != INVALID_HANDLE_VALUE) {
-      pos = uv__saved_screen_state.dwCursorPosition;
+      if (active_screen_buffer != INVALID_HANDLE_VALUE) {
+        pos = uv__saved_screen_state.dwCursorPosition;
 
-      /* If the cursor was at the bottom line of the screen buffer, the
-         VK_RETURN would have caused the buffer contents to scroll up by
-         one line. The right position to reset the cursor to is therefore one
-         line higher */
-      if (pos.Y == uv__saved_screen_state.dwSize.Y - 1)
-        pos.Y--;
+        /* If the cursor was at the bottom line of the screen buffer, the
+           VK_RETURN would have caused the buffer contents to scroll up by one
+           line. The right position to reset the cursor to is therefore one line
+           higher */
+        if (pos.Y == uv__saved_screen_state.dwSize.Y - 1)
+          pos.Y--;
 
-      SetConsoleCursorPosition(active_screen_buffer, pos);
-      CloseHandle(active_screen_buffer);
+        SetConsoleCursorPosition(active_screen_buffer, pos);
+        CloseHandle(active_screen_buffer);
+      }
     }
+    uv_sem_post(&uv_tty_output_lock);
   }
-
   POST_COMPLETION_FOR_REQ(loop, req);
   return 0;
 }
@@ -694,14 +710,14 @@ void uv_process_tty_read_raw_req(uv_loop_t* loop, uv_tty_t* handle,
       if (handle->tty.rd.last_input_record.EventType == WINDOW_BUFFER_SIZE_EVENT) {
         CONSOLE_SCREEN_BUFFER_INFO info;
 
-        EnterCriticalSection(&uv_tty_output_lock);
+        uv_sem_wait(&uv_tty_output_lock);
 
         if (uv_tty_output_handle != INVALID_HANDLE_VALUE &&
             GetConsoleScreenBufferInfo(uv_tty_output_handle, &info)) {
           uv_tty_update_virtual_window(&info);
         }
 
-        LeaveCriticalSection(&uv_tty_output_lock);
+        uv_sem_post(&uv_tty_output_lock);
 
         continue;
       }
@@ -988,6 +1004,9 @@ int uv_tty_read_start(uv_tty_t* handle, uv_alloc_cb alloc_cb,
   if (handle->tty.rd.last_key_len > 0) {
     SET_REQ_SUCCESS(&handle->read_req);
     uv_insert_pending_req(handle->loop, (uv_req_t*) &handle->read_req);
+    /* Make sure no attempt is made to insert it again until it's handled. */
+    handle->flags |= UV_HANDLE_READ_PENDING;
+    handle->reqs_pending++;
     return 0;
   }
 
@@ -1035,11 +1054,16 @@ static int uv__cancel_read_console(uv_tty_t* handle) {
 
   assert(!(handle->flags & UV_HANDLE_CANCELLATION_PENDING));
 
+  /* Hold the output lock during the cancellation, to ensure that further
+     writes don't interfere with the screen state. It will be the ReadConsole
+     thread's responsibility to release the lock. */
+  uv_sem_wait(&uv_tty_output_lock);
   status = InterlockedExchange(&uv__read_console_status, TRAP_REQUESTED);
   if (status != IN_PROGRESS) {
     /* Either we have managed to set a trap for the other thread before
        ReadConsole is called, or ReadConsole has returned because the user
        has pressed ENTER. In either case, there is nothing else to do. */
+    uv_sem_post(&uv_tty_output_lock);
     return 0;
   }
 
@@ -1596,17 +1620,29 @@ static int uv_tty_write_bufs(uv_tty_t* handle,
                              DWORD* error) {
   /* We can only write 8k characters at a time. Windows can't handle */
   /* much more characters in a single console write anyway. */
-  WCHAR utf16_buf[8192];
+  WCHAR utf16_buf[MAX_CONSOLE_CHAR];
+  WCHAR* utf16_buffer;
   DWORD utf16_buf_used = 0;
-  unsigned int i;
+  unsigned int i, len, max_len, pos;
+  int allocate = 0;
 
-#define FLUSH_TEXT()                                                \
-  do {                                                              \
-    if (utf16_buf_used > 0) {                                       \
-      uv_tty_emit_text(handle, utf16_buf, utf16_buf_used, error);   \
-      utf16_buf_used = 0;                                           \
-    }                                                               \
-  } while (0)
+#define FLUSH_TEXT()                                                 \
+  do {                                                               \
+    pos = 0;                                                         \
+    do {                                                             \
+      len = utf16_buf_used - pos;                                    \
+      if (len > MAX_CONSOLE_CHAR)                                    \
+        len = MAX_CONSOLE_CHAR;                                      \
+      uv_tty_emit_text(handle, &utf16_buffer[pos], len, error);      \
+      pos += len;                                                    \
+    } while (pos < utf16_buf_used);                                  \
+    if (allocate) {                                                  \
+      uv__free(utf16_buffer);                                        \
+      allocate = 0;                                                  \
+      utf16_buffer = utf16_buf;                                      \
+    }                                                                \
+    utf16_buf_used = 0;                                              \
+ } while (0)
 
 #define ENSURE_BUFFER_SPACE(wchars_needed)                          \
   if (wchars_needed > ARRAY_SIZE(utf16_buf) - utf16_buf_used) {     \
@@ -1624,38 +1660,47 @@ static int uv_tty_write_bufs(uv_tty_t* handle,
   /* state. */
   *error = ERROR_SUCCESS;
 
-  EnterCriticalSection(&uv_tty_output_lock);
+  utf16_buffer = utf16_buf;
+
+  uv_sem_wait(&uv_tty_output_lock);
 
   for (i = 0; i < nbufs; i++) {
     uv_buf_t buf = bufs[i];
     unsigned int j;
 
-  if (uv__vterm_state == UV_SUPPORTED) {
-    utf16_buf_used = MultiByteToWideChar(CP_UTF8,
-                                         0,
-                                         buf.base,
-                                         buf.len,
-                                         NULL,
-                                         0);
+    if (uv__vterm_state == UV_SUPPORTED && buf.len > 0) {
+      utf16_buf_used = MultiByteToWideChar(CP_UTF8,
+                                           0,
+                                           buf.base,
+                                           buf.len,
+                                           NULL,
+                                           0);
 
-    if (utf16_buf_used == 0) {
-      *error = GetLastError();
-      break;
+      if (utf16_buf_used == 0) {
+        *error = GetLastError();
+        break;
+      }
+
+      max_len = (utf16_buf_used + 1) * sizeof(WCHAR);
+      allocate = max_len > MAX_CONSOLE_CHAR;
+      if (allocate)
+        utf16_buffer = uv__malloc(max_len);
+      if (!MultiByteToWideChar(CP_UTF8,
+                               0,
+                               buf.base,
+                               buf.len,
+                               utf16_buffer,
+                               utf16_buf_used)) {
+        if (allocate)
+          uv__free(utf16_buffer);
+        *error = GetLastError();
+        break;
+      }
+
+      FLUSH_TEXT();
+
+      continue;
     }
-
-    if (!MultiByteToWideChar(CP_UTF8,
-                             0,
-                             buf.base,
-                             buf.len,
-                             utf16_buf,
-                             utf16_buf_used)) {
-      *error = GetLastError();
-      break;
-    }
-
-    FLUSH_TEXT();
-    continue;
-  }
 
     for (j = 0; j < buf.len; j++) {
       unsigned char c = buf.base[j];
@@ -2061,7 +2106,7 @@ static int uv_tty_write_bufs(uv_tty_t* handle,
   handle->tty.wr.previous_eol = previous_eol;
   handle->tty.wr.ansi_parser_state = ansi_parser_state;
 
-  LeaveCriticalSection(&uv_tty_output_lock);
+  uv_sem_post(&uv_tty_output_lock);
 
   if (*error == STATUS_SUCCESS) {
     return 0;

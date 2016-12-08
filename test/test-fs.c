@@ -1134,11 +1134,22 @@ TEST_IMPL(fs_fstat) {
   ASSERT(s->st_mtim.tv_nsec == 0);
   ASSERT(s->st_ctim.tv_sec == t.st_ctime);
   ASSERT(s->st_ctim.tv_nsec == 0);
+#elif defined(__ANDROID__)
+  ASSERT(s->st_atim.tv_sec == t.st_atime);
+  ASSERT(s->st_atim.tv_nsec == t.st_atimensec);
+  ASSERT(s->st_mtim.tv_sec == t.st_mtime);
+  ASSERT(s->st_mtim.tv_nsec == t.st_mtimensec);
+  ASSERT(s->st_ctim.tv_sec == t.st_ctime);
+  ASSERT(s->st_ctim.tv_nsec == t.st_ctimensec);
 #elif !defined(__MVS__) && ( \
-      defined(__sun)  || \
-      defined(_BSD_SOURCE) || \
-      defined(_SVID_SOURCE) || \
-      defined(_XOPEN_SOURCE) || \
+      defined(__DragonFly__)   || \
+      defined(__FreeBSD__)     || \
+      defined(__OpenBSD__)     || \
+      defined(__NetBSD__)      || \
+      defined(_GNU_SOURCE)     || \
+      defined(_BSD_SOURCE)     || \
+      defined(_SVID_SOURCE)    || \
+      defined(_XOPEN_SOURCE)   || \
       defined(_DEFAULT_SOURCE))
   ASSERT(s->st_atim.tv_sec == t.st_atim.tv_sec);
   ASSERT(s->st_atim.tv_nsec == t.st_atim.tv_nsec);
@@ -1146,10 +1157,8 @@ TEST_IMPL(fs_fstat) {
   ASSERT(s->st_mtim.tv_nsec == t.st_mtim.tv_nsec);
   ASSERT(s->st_ctim.tv_sec == t.st_ctim.tv_sec);
   ASSERT(s->st_ctim.tv_nsec == t.st_ctim.tv_nsec);
-# if defined(__DragonFly__)  || \
-      defined(__FreeBSD__)    || \
-      defined(__OpenBSD__)    || \
-      defined(__NetBSD__)
+# if defined(__FreeBSD__)    || \
+     defined(__NetBSD__)
   ASSERT(s->st_birthtim.tv_sec == t.st_birthtim.tv_sec);
   ASSERT(s->st_birthtim.tv_nsec == t.st_birthtim.tv_nsec);
   ASSERT(s->st_flags == t.st_flags);
@@ -2624,7 +2633,7 @@ TEST_IMPL(fs_write_alotof_bufs_with_offset) {
   r = uv_fs_read(NULL, &read_req, open_req1.result,
                  iovs, iovcount, offset, NULL);
   ASSERT(r >= 0);
-  ASSERT(read_req.result == sizeof(test_buf) * iovcount);
+  ASSERT((size_t)read_req.result == sizeof(test_buf) * iovcount);
 
   for (index = 0; index < iovcount; ++index)
     ASSERT(strncmp(buffer + index * sizeof(test_buf),
