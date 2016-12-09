@@ -773,5 +773,21 @@ void uv_loadavg(double avg[3]) {
   avg[2] = 0;
 }
 
-void uv__set_process_title(const char* title) {
+
+char** uv_setup_args(int argc, char** argv) {
+  return argv;
+}
+
+
+int uv_set_process_title(const char* title) {
+  return 0;
+}
+
+
+int uv_get_process_title(char* buffer, size_t size) {
+  if (buffer == NULL || size == 0)
+    return -EINVAL;
+
+  buffer[0] = '\0';
+  return 0;
 }
