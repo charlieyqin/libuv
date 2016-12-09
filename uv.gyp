@@ -559,10 +559,10 @@
         }],
         ['uv_library=="shared_library"', {
           'defines': [ 'USING_UV_SHARED=1' ],
-          'conditions': [
+          'conditions': [ 
             [ 'OS == "zos"', {
               'cflags': [ '-Wc,DLL' ],
-            }],
+            }], 
           ],
         }],
       ],
