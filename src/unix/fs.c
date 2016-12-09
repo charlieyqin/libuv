@@ -245,7 +245,7 @@ static ssize_t uv__fs_mkdtemp(uv_fs_t* req) {
   unsigned int tries, i;
   size_t len;
   uint64_t v;
-  FILE *finput;
+  int fd;
   int retval;
   int saved_errno;
 
@@ -256,14 +256,14 @@ static ssize_t uv__fs_mkdtemp(uv_fs_t* req) {
     return -1;
   }
 
-  finput = fopen("/dev/urandom", "r");
-  if (finput == NULL)
+  fd = open("/dev/urandom", O_RDONLY);
+  if (fd == -1)
     return -1;
 
   tries = TMP_MAX;
   retval = -1;
   do {
-    if (fread(&v, 1, sizeof(v), finput) != sizeof(v))
+    if (read(fd, &v, sizeof(v)) != sizeof(v))
       break;
 
     cp = ep - num_x;
@@ -281,7 +281,7 @@ static ssize_t uv__fs_mkdtemp(uv_fs_t* req) {
   } while (--tries);
 
   saved_errno = errno;
-  fclose(finput);
+  uv__close(fd);
   if (tries == 0) {
     errno = EEXIST;
     return -1;
