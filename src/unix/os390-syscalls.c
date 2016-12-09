@@ -22,41 +22,33 @@
 
 #include "os390-syscalls.h"
 #include <errno.h>
-#include <string.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <search.h>
 
-#define CW_CONDVAR    32
+#define CW_CONDVAR 32
+
 #pragma linkage(BPX4CTW, OS)
 #pragma linkage(BPX1CTW, OS)
 
-#define PGTH_CURRENT  1
-#define PGTH_LEN      26
-#define PGTHAPATH     0x20
-#pragma linkage(BPX4GTH, OS)
-#pragma linkage(BPX1GTH, OS)
-
-
 static int number_of_epolls;
-struct _epoll_list* _global_epoll_list[MAX_EPOLL_INSTANCES];
+static QUEUE global_epoll_queue;
+static uv_mutex_t global_epoll_lock;
+static uv_once_t once = UV_ONCE_INIT;
 
-int alphasort(const void *a, const void *b) {
-
-  return strcoll( (*(const struct dirent **)a)->d_name, 
-                  (*(const struct dirent **)b)->d_name );
-}
-
-int scandir(const char *maindir, struct dirent ***namelist,
-            int (*filter)(const struct dirent *),
-            int (*compar)(const struct dirent **,
+int scandir(const char* maindir, struct dirent*** namelist,
+            int (*filter)(const struct dirent*),
+            int (*compar)(const struct dirent**,
             const struct dirent **)) {
-  struct dirent **nl = NULL;
-  struct dirent *dirent;
-  size_t count = 0;
-  size_t allocated = 0;
-  DIR *mdir;
+  struct dirent** nl;
+  struct dirent* dirent;
+  unsigned count;
+  size_t allocated;
+  DIR* mdir;
 
+  nl = NULL;
+  count = 0;
+  allocated = 0;
   mdir = opendir(maindir);
   if (!mdir)
     return -1;
@@ -66,27 +58,27 @@ int scandir(const char *maindir, struct dirent ***namelist,
     if (!dirent)
       break;
     if (!filter || filter(dirent)) {
-      struct dirent *copy;
-      copy = malloc(sizeof(*copy));
+      struct dirent* copy;
+      copy = uv__malloc(sizeof(*copy));
       if (!copy) {
         while (count) {
           dirent = nl[--count];
-          free(dirent);
+          uv__free(dirent);
         }
-        free(nl);
+        uv__free(nl);
         closedir(mdir);
         errno = ENOMEM;
         return -1;
       }
       memcpy(copy, dirent, sizeof(*copy));
 
-      nl = realloc(nl, count+1);
+      nl = uv__realloc(nl, sizeof(*copy) * (count + 1));
       nl[count++] = copy;
     }
   }
 
   qsort(nl, count, sizeof(struct dirent *),
-      (int (*)(const void *, const void *))compar);
+       (int (*)(const void *, const void *)) compar);
 
   closedir(mdir);
 
@@ -94,120 +86,115 @@ int scandir(const char *maindir, struct dirent ***namelist,
   return count;
 }
 
-static int isfdequal(const struct pollfd* a, const struct pollfd* b) {
-  return a->fd == b->fd ? 0 : 1;
+
+static unsigned int next_power_of_two(unsigned int val) {
+  val -= 1;
+  val |= val >> 1;
+  val |= val >> 2;
+  val |= val >> 4;
+  val |= val >> 8;
+  val |= val >> 16;
+  val += 1;
+  return val;
 }
 
-int epoll_create1(int flags)
-{
-  struct _epoll_list* p = (struct _epoll_list*)malloc(
-                           sizeof(struct _epoll_list));
 
-  memset(p, 0, sizeof(struct _epoll_list));
-  int index = number_of_epolls++;
-  _global_epoll_list[index] = p;
+static void maybe_resize(uv__os390_epoll* lst, unsigned int len) {
+  unsigned int newsize;
+  unsigned int i;
+  struct pollfd* newlst;
 
-  if (uv_mutex_init(&p->lock)) {
-    errno = ENOLCK;
-    return -1;
-  }
+  if (len <= lst->size)
+    return;
 
-  p->size = 0;
-  return index; 
+  newsize = next_power_of_two(len);
+  newlst = uv__realloc(lst->items, newsize * sizeof(lst->items[0]));
+
+  if (newlst == NULL)
+    abort();
+  for (i = lst->size; i < newsize; ++i)
+    newlst[i].fd = -1;
+
+  lst->items = newlst;
+  lst->size = newsize;
 }
 
-int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)
-{
-  struct _epoll_list *lst = _global_epoll_list[epfd];
 
-  if (op == EPOLL_CTL_DEL) {
+static void epoll_init() {
+  QUEUE_INIT(&global_epoll_queue);
+  if (uv_mutex_init(&global_epoll_lock))
+    abort();
+}
 
-    struct pollfd* found;
-    struct pollfd pfd;
 
-    pfd.fd = fd;
-    uv_mutex_lock(&lst->lock);
-    found = lfind(&pfd, &lst->items[0], &lst->size,
-                  sizeof(struct pollfd), isfdequal);
-    if (found != NULL)
-      memcpy(found,
-             found+1,
-             (&lst->items[lst->size--] - found - 1) * sizeof(*found));
-    uv_mutex_unlock(&lst->lock);
+uv__os390_epoll* epoll_create1(int flags) {
+  uv__os390_epoll* lst;
 
-    if (found == NULL)
-      return ENOENT;
+  uv_once(&once, epoll_init);
+  uv_mutex_lock(&global_epoll_lock);
+  lst = uv__malloc(sizeof(*lst));
+  if (lst == -1)
+    return NULL;
+  QUEUE_INSERT_TAIL(&global_epoll_queue, &lst->member);
+  uv_mutex_unlock(&global_epoll_lock);
 
-  }
-  else if(op == EPOLL_CTL_ADD)
-  {
-    struct pollfd* found;
-    struct pollfd pfd;
-    size_t before;
-    size_t after;
+  /* initialize list */
+  lst->size = 0;
+  lst->items = NULL;
+  return lst; 
+}
 
-    if (lst->size == MAX_ITEMS_PER_EPOLL - 1)
-      return ENOMEM;
 
-    pfd.fd = fd;
-    pfd.events = event->events;
-    uv_mutex_lock(&lst->lock);
-    before = lst->size; 
-    found = lsearch(&pfd, &lst->items[0], &lst->size,
-                    sizeof(struct pollfd), isfdequal);
-    after = lst->size; 
-    uv_mutex_unlock(&lst->lock);
+int epoll_ctl(uv__os390_epoll* lst, int op, int fd, 
+              struct epoll_event *event) {
 
-    if (found != NULL && before == after) {
-      errno = EEXIST;
-      return -1;
-    }
-
-  }
-  else if(op == EPOLL_CTL_MOD)
-  {
-    int index;
-    struct pollfd* found;
-    struct pollfd pfd;
-
-    pfd.fd = fd;
-    uv_mutex_lock(&lst->lock);
-    found = lfind(&pfd, &lst->items[0], &lst->size,
-                  sizeof(struct pollfd), isfdequal);
-
-    if (found != NULL)
-      found->events = event->events;
-      
-    uv_mutex_unlock(&lst->lock);
-
-    if (found == NULL) {
+  if(op == EPOLL_CTL_DEL) {
+    if (fd >= lst->size || lst->items[fd].fd == -1) {
       errno = ENOENT;
       return -1;
     }
-  }
-  else 
-  {
+    lst->items[fd].fd = -1;
+  } else if(op == EPOLL_CTL_ADD) {
+    maybe_resize(lst, fd + 1);
+    if (lst->items[fd].fd != -1) {
+      errno = EEXIST;
+      return -1;
+    }
+    lst->items[fd].fd = fd;
+    lst->items[fd].events = event->events;
+  } else if(op == EPOLL_CTL_MOD) {
+    if (fd >= lst->size || lst->items[fd].fd == -1) {
+      errno = ENOENT;
+      return -1;
+    }
+    lst->items[fd].events = event->events;
+  } else
     abort();
-  }
+
   return 0;
 }
 
-int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
-{
-  struct _epoll_list *lst = _global_epoll_list[epfd];
 
-  unsigned int size = lst->size;
+int epoll_wait(uv__os390_epoll* lst, struct epoll_event* events,
+               int maxevents, int timeout) {
+  size_t size;
+  struct pollfd* pfds;
+  int pollret;
+  int reventcount;
 
-  struct pollfd *pfds = lst->items;
-  int returnval = poll( pfds, size, timeout );
-  if(returnval == -1)
-    return returnval;
+  uv_mutex_lock(&global_epoll_lock);
+  uv_mutex_unlock(&global_epoll_lock);
+  size = lst->size;
+  pfds = lst->items;
+  pollret = poll(pfds, size, timeout);
+  if(pollret == -1)
+    return pollret;
 
-  int reventcount=0;
-  int realsize = lst->size;
-  for (int i = 0; i < realsize && i < maxevents; ++i)                     
-  {
-    struct epoll_event ev = { 0, 0 };
+  reventcount = 0;
+  for (int i = 0; i < lst->size && i < maxevents; ++i) {
+    struct epoll_event ev;
+
+    ev.events = 0;
     ev.fd = pfds[i].fd;
     if(!pfds[i].revents)
       continue;
@@ -223,133 +210,47 @@ int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
 
     pfds[i].revents = 0;
     events[reventcount++] = ev; 
-
   }
 
   return reventcount;
 }
 
-int epoll_file_close(int fd)
-{
-  for( int i = 0; i < number_of_epolls; ++i )
-  {
-    struct _epoll_list *lst = _global_epoll_list[i];
-    struct pollfd* found;
-    struct pollfd pfd;
 
-    pfd.fd = fd;
-    uv_mutex_lock(&lst->lock);
-    found = lfind(&pfd, &lst->items[0], &lst->size,
-                  sizeof(struct pollfd), isfdequal);
-    if (found != NULL)
-      memcpy(found,
-             found+1,
-             (&lst->items[lst->size--] - found - 1) * sizeof(*found));
-    uv_mutex_unlock(&lst->lock);
+int epoll_file_close(int fd) {
+  QUEUE* q;
+
+  uv_mutex_lock(&global_epoll_lock);
+  QUEUE_FOREACH(q, &global_epoll_queue) {
+    uv__os390_epoll* lst;
+
+    lst = QUEUE_DATA(q, uv__os390_epoll, member);
+    if (lst->items[fd].fd != -1)
+      lst->items[fd].fd = -1;
   }
 
+  uv_mutex_unlock(&global_epoll_lock);
   return 0;
 }
 
-int getexe(const int pid, char *buf, size_t len) {
-
-  struct {
-    int pid;
-    int thid[2];
-    char accesspid;
-    char accessthid;
-    char asid[2];
-    char loginname[8];
-    char flag;
-    char len;
-  } Input_data;
-
-  union {
-    struct {
-      char gthb[4];
-      int pid;
-      int thid[2];
-      char accesspid;
-      char accessthid[3];
-      int lenused;
-      int offsetProcess;
-      int offsetConTTY;
-      int offsetPath;
-      int offsetCommand;
-      int offsetFileData;
-      int offsetThread;
-    } Output_data;
-    char buf[2048];
-  } Output_buf;
-
-  struct Output_path_type {
-    char gthe[4];
-    short int len;
-    char path[1024];
-  } ;
-
-  int Input_length = PGTH_LEN;
-  int Output_length = sizeof(Output_buf);
-  void *Input_address = &Input_data;
-  void *Output_address = &Output_buf;
-  struct Output_path_type *Output_path;
-  int rv; 
-  int rc; 
-  int rsn;
-
-  memset(&Input_data, 0, sizeof Input_data);
-  Input_data.flag |= PGTHAPATH;
-  Input_data.pid = pid;
-  Input_data.accesspid = PGTH_CURRENT;
-
-#ifdef _LP64
-  BPX4GTH(&Input_length,
-          &Input_address,
-          &Output_length,
-          &Output_address,
-          &rv,
-          &rc,
-          &rsn);
-#else
-  BPX1GTH(&Input_length,
-          &Input_address,
-          &Output_length,
-          &Output_address,
-          &rv,
-          &rc,
-          &rsn);
-#endif
-
-  if (rv == -1) {
-    errno = rc;
-    return -1;
-  }
-
-
-  assert( ((Output_buf.Output_data.offsetPath >>24) & 0xFF) == 'A');
-  Output_path = (char*)(&Output_buf) + 
-      (Output_buf.Output_data.offsetPath & 0x00FFFFFF);
-  
-  if (Output_path->len >= len) {
-    errno = ENOBUFS;
-    return -1;
-  }
-
-  strncpy(buf, Output_path->path, len);
-
-  return 0;
+void epoll_queue_close(uv__os390_epoll* lst) {
+  uv_mutex_lock(&global_epoll_lock);
+  QUEUE_REMOVE(&lst->member);
+  uv_mutex_unlock(&global_epoll_lock);
+  uv__free(lst->items);
 }
 
 
-int nanosleep(const struct timespec *req, struct timespec *rem) {
+int nanosleep(const struct timespec* req, struct timespec* rem) {
   unsigned nano;
   unsigned seconds;
-  unsigned events=32;
+  unsigned events;
   unsigned secrem;
   unsigned nanorem;
-  int rv, rc, rsn;
+  int rv;
+  int rc;
+  int rsn;
 
-  nano = req->tv_nsec;
+  nano = (int)req->tv_nsec;
   seconds = req->tv_sec;
   events = CW_CONDVAR;
   
@@ -359,14 +260,72 @@ int nanosleep(const struct timespec *req, struct timespec *rem) {
   BPX1CTW(&seconds, &nano, &events, &secrem, &nanorem, &rv, &rc, &rsn);
 #endif
 
+  assert(rv == -1 && errno == EAGAIN);
+
   if(rem != NULL) {
     rem->tv_nsec = nanorem;
     rem->tv_sec = secrem;
   }
 
-  if(rv == -1 && errno == EAGAIN)
-    return 0;
-  
-  errno = ENOTSUP;
-  return -1;
+  return 0;
+}
+
+
+char* mkdtemp(char* path) {
+  static const char* tempchars =
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  static const size_t num_chars = 62;
+  static const size_t num_x = 6;
+  char *ep, *cp;
+  unsigned int tries, i;
+  size_t len;
+  uint64_t v;
+  int fd;
+  int retval;
+  int saved_errno;
+
+  len = strlen(path);
+  ep = path + len;
+  if (len < num_x || strncmp(ep - num_x, "XXXXXX", num_x)) {
+    errno = EINVAL;
+    return NULL;
+  }
+
+  fd = open("/dev/urandom", O_RDONLY);
+  if (fd == -1)
+    return NULL;
+
+  tries = TMP_MAX;
+  retval = -1;
+  do {
+    if (read(fd, &v, sizeof(v)) != sizeof(v))
+      break;
+
+    cp = ep - num_x;
+    for (i = 0; i < num_x; i++) {
+      *cp++ = tempchars[v % num_chars];
+      v /= num_chars;
+    }
+
+    if (mkdir(path, S_IRWXU) == 0) {
+      retval = 0;
+      break;
+    }
+    else if (errno != EEXIST)
+      break;
+  } while (--tries);
+
+  saved_errno = errno;
+  uv__close(fd);
+  if (tries == 0) {
+    errno = EEXIST;
+    return NULL;
+  }
+
+  if (retval == -1) {
+    errno = saved_errno;
+    return NULL;
+  }
+
+  return path;
 }

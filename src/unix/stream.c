@@ -390,7 +390,7 @@ failed_malloc:
 
 
 int uv__stream_open(uv_stream_t* stream, int fd, int flags) {
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__MVS__)
   int enable;
 #endif
 
@@ -409,7 +409,7 @@ int uv__stream_open(uv_stream_t* stream, int fd, int flags) {
       return -errno;
   }
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__MVS__)
   enable = 1;
   if (setsockopt(fd, SOL_SOCKET, SO_OOBINLINE, &enable, sizeof(enable)) &&
       errno != ENOTSOCK &&
@@ -1198,10 +1198,12 @@ static void uv__read(uv_stream_t* stream) {
 
 #if defined(__MVS__)
       if (is_ipc && msg.msg_controllen > 0) {
-        uv_buf_t blankbuf = {0, 0};
+        uv_buf_t blankbuf;
         int nread;
         struct iovec *old;
 
+        blankbuf.base = 0;
+        blankbuf.len = 0;
         old = msg.msg_iov;
         msg.msg_iov = (struct iovec*) &blankbuf;
         nread = 0;
@@ -1213,7 +1215,7 @@ static void uv__read(uv_stream_t* stream) {
             msg.msg_iov = old;
             return;
           }
-        } while ( nread == 0 && msg.msg_controllen > 0 );
+        } while (nread == 0 && msg.msg_controllen > 0);
         msg.msg_iov = old;
       }
 #endif

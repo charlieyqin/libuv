@@ -20,13 +20,11 @@
  */
 
 #include "internal.h"
-#include "os390-syscalls.h"
 #include <sys/ioctl.h>
 #include <net/if.h>
 #include <utmpx.h>
-#include <sys/time.h>
-#include <sys/ps.h>
 #include <unistd.h>
+#include <sys/ps.h>
 #if defined(__clang__)
 #include "csrsic.h"
 #else
@@ -50,23 +48,33 @@
 /* 32-bit count of alive CPUs. This includes both CPs and IFAs */
 #define CSD_NUMBER_ONLINE_CPUS        0xD4
 
-/* ADDRESS OF SYSTEM RESOURCES MANAGER (SRM) CONTROL TABLE */
+/* Address of system resources manager (SRM) control table */
 #define CVTOPCTP_OFFSET   0x25C
 
 /* Address of the RCT table */
 #define RMCTRCT_OFFSET    0xE4
 
-/* "V(IARMRRCE)" - ADDRESS OF THE RSM CONTROL AND ENUMERATION AREA. */
+/* Address of the rsm control and enumeration area. */
 #define CVTRCEP_OFFSET    0x490
 
 /* 
-    NUMBER OF FRAMES CURRENTLY AVAILABLE TO SYSTEM. 
-    EXCLUDED ARE FRAMES BACKING PERM STORAGE, FRAMES OFFLINE, AND BAD FRAMES
+    Number of frames currently available to system. 
+    Excluded are frames backing perm storage, frames offline, and bad frames.
 */
 #define RCEPOOL_OFFSET    0x004
 
-/* TOTAL NUMBER OF FRAMES CURRENTLY ON ALL AVAILABLE FRAME QUEUES. */
+/* Total number of frames currently on all available frame queues. */
 #define RCEAFC_OFFSET     0x088
+
+/* CPC model length from the CSRSI Service. */
+#define CPCMODEL_LENGTH   16
+
+/* Thread Entry constants */
+#define PGTH_CURRENT  1
+#define PGTH_LEN      26
+#define PGTHAPATH     0x20
+#pragma linkage(BPX4GTH, OS)
+#pragma linkage(BPX1GTH, OS)
 
 typedef unsigned data_area_ptr_assign_type;
 
@@ -81,33 +89,139 @@ typedef union {
 } data_area_ptr; 
 
 
+void uv_loadavg(double avg[3]) {
+  /* TODO: implement the following */
+  avg[0] = 0;
+  avg[1] = 0;
+  avg[2] = 0;
+}
+
+
 int uv__platform_loop_init(uv_loop_t* loop) {
-  int fd;
+  uv__os390_epoll* ep;
 
-  fd = epoll_create1(UV__EPOLL_CLOEXEC);
-
-  if (fd != -1)
-    uv__cloexec(fd, 1);
-
-  loop->backend_fd = fd;
-
-  if (fd == -1)
+  ep = epoll_create1(UV__EPOLL_CLOEXEC);
+  loop->ep = ep;
+  if (ep == NULL)
     return -errno;
 
   return 0;
 }
 
+
 void uv__platform_loop_delete(uv_loop_t* loop) {
-  loop->backend_fd = -1;
+  if (loop->ep != NULL) {
+    epoll_queue_close(loop->ep);
+    loop->ep = NULL;
+  }
 }
 
+
 uint64_t uv__hrtime(uv_clocktype_t type) {
-  uint64_t G = 1000000000;
-  uint64_t K = 1000;
-  struct timeval t;
-  gettimeofday(&t, NULL);
-  return (uint64_t) t.tv_sec * G + t.tv_usec * K;
+  struct timeval time;
+  gettimeofday(&time, NULL);
+  return (uint64_t) time.tv_sec * 1e9 + time.tv_usec * 1e3;
 }
+
+
+/*  
+    Get the exe path using the thread entry information
+    in the address space.
+*/
+static int getexe(const int pid, char* buf, size_t len) {
+  struct {
+    int pid;
+    int thid[2];
+    char accesspid;
+    char accessthid;
+    char asid[2];
+    char loginname[8];
+    char flag;
+    char len;
+  } Input_data;
+
+  union {
+    struct {
+      char gthb[4];
+      int pid;
+      int thid[2];
+      char accesspid;
+      char accessthid[3];
+      int lenused;
+      int offsetProcess;
+      int offsetConTTY;
+      int offsetPath;
+      int offsetCommand;
+      int offsetFileData;
+      int offsetThread;
+    } Output_data;
+    char buf[2048];
+  } Output_buf;
+
+  struct Output_path_type {
+    char gthe[4];
+    short int len;
+    char path[1024];
+  };
+
+  int Input_length;
+  int Output_length;
+  void* Input_address;
+  void* Output_address;
+  struct Output_path_type* Output_path;
+  int rv; 
+  int rc; 
+  int rsn;
+
+  Input_length = PGTH_LEN;
+  Output_length = sizeof(Output_buf);
+  Output_address = &Output_buf;
+  Input_address = &Input_data;
+  memset(&Input_data, 0, sizeof Input_data);
+  Input_data.flag |= PGTHAPATH;
+  Input_data.pid = pid;
+  Input_data.accesspid = PGTH_CURRENT;
+
+#ifdef _LP64
+  BPX4GTH(&Input_length,
+          &Input_address,
+          &Output_length,
+          &Output_address,
+          &rv,
+          &rc,
+          &rsn);
+#else
+  BPX1GTH(&Input_length,
+          &Input_address,
+          &Output_length,
+          &Output_address,
+          &rv,
+          &rc,
+          &rsn);
+#endif
+
+  if (rv == -1) {
+    errno = rc;
+    return -1;
+  }
+
+  /* Check highest byte to ensure data availability */
+  assert(((Output_buf.Output_data.offsetPath >>24) & 0xFF) == 'A');
+
+  /* Get the offset from the lowest 3 bytes */
+  Output_path = (char*)(&Output_buf) + 
+                (Output_buf.Output_data.offsetPath & 0x00FFFFFF);
+  
+  if (Output_path->len >= len) {
+    errno = ENOBUFS;
+    return -1;
+  }
+
+  strncpy(buf, Output_path->path, len);
+
+  return 0;
+}
+
 
 /*
  * We could use a static buffer for the path manipulations that we need outside
@@ -156,11 +270,11 @@ int uv_exepath(char* buffer, size_t* size) {
 
     return 0;
   } else {
-  /* Case iii). Search PATH environment variable */
+    /* Case iii). Search PATH environment variable */
     char trypath[PATH_MAX];
-    char *clonedpath = NULL;
-    char *token = NULL;
-    char *path = getenv("PATH");
+    char* clonedpath = NULL;
+    char* token = NULL;
+    char* path = getenv("PATH");
 
     if (path == NULL)
       return -EINVAL;
@@ -197,47 +311,56 @@ int uv_exepath(char* buffer, size_t* size) {
   }
 }
 
+
 uint64_t uv_get_free_memory(void) {
+  uint64_t freeram;
+
   data_area_ptr cvt = {0};
   data_area_ptr rcep = {0};
   cvt.assign = *(data_area_ptr_assign_type*)(CVT_PTR);
   rcep.assign = *(data_area_ptr_assign_type*)(cvt.deref + CVTRCEP_OFFSET);
-  uint64_t freeram = *((uint64_t*)(rcep.deref + RCEAFC_OFFSET)) * 4;
+  freeram = *((uint64_t*)(rcep.deref + RCEAFC_OFFSET)) * 4;
   return freeram;
 }
 
+
 uint64_t uv_get_total_memory(void) {
+  uint64_t totalram;
+
   data_area_ptr cvt = {0};
   data_area_ptr rcep = {0};
   cvt.assign = *(data_area_ptr_assign_type*)(CVT_PTR);
   rcep.assign = *(data_area_ptr_assign_type*)(cvt.deref + CVTRCEP_OFFSET);
-  uint64_t totalram = *((uint64_t*)(rcep.deref + RCEPOOL_OFFSET)) * 4;
+  totalram = *((uint64_t*)(rcep.deref + RCEPOOL_OFFSET)) * 4;
   return totalram;
 }
+
 
 int uv_resident_set_memory(size_t* rss) {
   W_PSPROC buf;
 
-  memset(&buf, 0x00, sizeof(buf));
-  if(w_getpsent(0, &buf, sizeof(W_PSPROC)) == -1)
+  memset(&buf, 0, sizeof(buf));
+  if (w_getpsent(0, &buf, sizeof(W_PSPROC)) == -1)
     return -EINVAL;
 
   *rss = buf.ps_size;
   return 0;
 }
 
+
 int uv_uptime(double* uptime) {
   struct utmpx u ;
   struct utmpx *v;
+  time64_t t;
 
   u.ut_type = BOOT_TIME;
   v = getutxid(&u);
-  if (v==NULL)
+  if (v == NULL)
     return -1;
-  time64_t t;
-  *uptime = difftime64( time64(&t), v->ut_tv.tv_sec);
+  *uptime = difftime64(time64(&t), v->ut_tv.tv_sec);
   return 0;
 }
+
 
 int uv_cpu_info(uv_cpu_info_t** cpu_infos, int* count) {
   uv_cpu_info_t* cpu_info;
@@ -259,60 +382,61 @@ int uv_cpu_info(uv_cpu_info_t** cpu_infos, int* count) {
   *count = *((int*) (csd.deref + CSD_NUMBER_ONLINE_CPUS));
   cpu_usage_avg = *((unsigned short int*) (rmctrct.deref + RCTLACS_OFFSET));
 
-  *cpu_infos = (uv_cpu_info_t*) uv__malloc(*count * sizeof(uv_cpu_info_t));
+  *cpu_infos = uv__malloc(*count * sizeof(uv_cpu_info_t));
   if (!*cpu_infos)
     return -ENOMEM;
 
   cpu_info = *cpu_infos;
   idx = 0;
   while (idx < *count) {
-
     cpu_info->speed = *(int*)(info.siv1v2si22v1.si22v1cpucapability);
-    cpu_info->model = malloc(17);
-    memset(cpu_info->model, '\0', 17);
-    memcpy(cpu_info->model, info.siv1v2si11v1.si11v1cpcmodel, 16);
+    cpu_info->model = uv__malloc(CPCMODEL_LENGTH + 1);
+    memset(cpu_info->model, '\0', CPCMODEL_LENGTH + 1);
+    memcpy(cpu_info->model, info.siv1v2si11v1.si11v1cpcmodel, CPCMODEL_LENGTH);
     cpu_info->cpu_times.user = cpu_usage_avg;
+    /* TODO: implement the following */
     cpu_info->cpu_times.sys = 0;
     cpu_info->cpu_times.idle = 0;
     cpu_info->cpu_times.irq = 0;
     cpu_info->cpu_times.nice = 0;
-    cpu_info++;
-    idx++;
+    ++cpu_info;
+    ++idx;
   }
 
   return 0;
 }
 
+
 void uv_free_cpu_info(uv_cpu_info_t* cpu_infos, int count) {
-  int i;
-
-  for (i = 0; i < count; ++i) {
+  for (int i = 0; i < count; ++i)
     uv__free(cpu_infos[i].model);
-  }
-
   uv__free(cpu_infos);
 }
 
+
 static int uv__interface_addresses_v6(uv_interface_address_t** addresses,
-    int* count) {
+                                      int* count) {
   uv_interface_address_t* address;
   int sockfd;
-  int size = 16384;
+  int maxsize;
   __net_ifconf6header_t ifc;
-  __net_ifconf6entry_t *ifr, *p, flg;
+  __net_ifconf6entry_t* ifr;
+  __net_ifconf6entry_t* p;
+  __net_ifconf6entry_t flg;
 
   *count = 0;
+  /* Assume maximum buffer size allowable */
+  maxsize = 16384;
 
-  if (0 > (sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP))) {
+  if (0 > (sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP)))
     return -errno;
-  }
 
   ifc.__nif6h_version = 1;
-  ifc.__nif6h_buflen = size;
-  ifc.__nif6h_buffer = (char*)uv__malloc(size);;
+  ifc.__nif6h_buflen = maxsize;
+  ifc.__nif6h_buffer = uv__malloc(maxsize);;
 
   if (ioctl(sockfd, SIOCGIFCONF6, &ifc) == -1) {
-    SAVE_ERRNO(uv__close(sockfd));
+    uv__close(sockfd);
     return -errno;
   }
 
@@ -323,8 +447,7 @@ static int uv__interface_addresses_v6(uv_interface_address_t** addresses,
   *count = ifc.__nif6h_entries;
 
   /* Alloc the return interface structs */
-  *addresses = (uv_interface_address_t*)
-    uv__malloc(*count * sizeof(uv_interface_address_t));
+  *addresses = uv__malloc(*count * sizeof(uv_interface_address_t));
   if (!(*addresses)) {
     uv__close(sockfd);
     return -ENOMEM;
@@ -347,11 +470,10 @@ static int uv__interface_addresses_v6(uv_interface_address_t** addresses,
 
     address->name = uv__strdup(p->__nif6e_name);
 
-    if (p->__nif6e_addr.sin6_family == AF_INET6) {
+    if (p->__nif6e_addr.sin6_family == AF_INET6)
       address->address.address6 = *((struct sockaddr_in6*) &p->__nif6e_addr);
-    } else {
+    else
       address->address.address4 = *((struct sockaddr_in*) &p->__nif6e_addr);
-    }
 
     /* TODO: Retrieve netmask using SIOCGIFNETMASK ioctl */
 
@@ -367,30 +489,35 @@ static int uv__interface_addresses_v6(uv_interface_address_t** addresses,
   return 0;
 }
 
-int uv_interface_addresses(uv_interface_address_t** addresses,
-    int* count) {
+
+int uv_interface_addresses(uv_interface_address_t** addresses, int* count) {
   uv_interface_address_t* address;
   int sockfd;
-  int size = 16384;
+  int maxsize;
   struct ifconf ifc;
-  struct ifreq *ifr, *p, flg;
+  struct ifreq flg;
+  struct ifreq* ifr;
+  struct ifreq* p;
+  int count_v6;
 
   /* get the ipv6 addresses first */
-  uv_interface_address_t *addresses_v6;
-  int count_v6;
+  uv_interface_address_t* addresses_v6;
   uv__interface_addresses_v6(&addresses_v6, &count_v6);
 
   /* now get the ipv4 addresses */
   *count = 0;
 
-  if (0 > (sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP))) {
-    return -errno;
-  }
+  /* Assume maximum buffer size allowable */
+  maxsize = 16384;
 
-  ifc.ifc_req = (struct ifreq*)uv__malloc(size);
-  ifc.ifc_len = size;
+  sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+  if (0 > sockfd)
+    return -errno;
+
+  ifc.ifc_req = uv__malloc(maxsize);
+  ifc.ifc_len = maxsize;
   if (ioctl(sockfd, SIOCGIFCONF, &ifc) == -1) {
-    SAVE_ERRNO(uv__close(sockfd));
+    uv__close(sockfd);
     return -errno;
   }
 
@@ -410,7 +537,7 @@ int uv_interface_addresses(uv_interface_address_t** addresses,
 
     memcpy(flg.ifr_name, p->ifr_name, sizeof(flg.ifr_name));
     if (ioctl(sockfd, SIOCGIFFLAGS, &flg) == -1) {
-      SAVE_ERRNO(uv__close(sockfd));
+      uv__close(sockfd);
       return -errno;
     }
 
@@ -421,8 +548,9 @@ int uv_interface_addresses(uv_interface_address_t** addresses,
   }
 
   /* Alloc the return interface structs */
-  *addresses = (uv_interface_address_t*)
-    uv__malloc((*count + count_v6) * sizeof(uv_interface_address_t));
+  *addresses = uv__malloc((*count + count_v6) * 
+                          sizeof(uv_interface_address_t));
+
   if (!(*addresses)) {
     uv__close(sockfd);
     return -ENOMEM;
@@ -433,7 +561,7 @@ int uv_interface_addresses(uv_interface_address_t** addresses,
   memcpy(address, addresses_v6, count_v6 * sizeof(uv_interface_address_t));
   address += count_v6;
   *count += count_v6;
-  free(addresses_v6);
+  uv__free(addresses_v6);
 
   ifr = ifc.ifc_req;
   while ((char*)ifr < (char*)ifc.ifc_req + ifc.ifc_len) {
@@ -464,10 +592,7 @@ int uv_interface_addresses(uv_interface_address_t** addresses,
       address->address.address4 = *((struct sockaddr_in*) &p->ifr_addr);
     }
 
-    /* TODO: Retrieve netmask using SIOCGIFNETMASK ioctl */
-
     address->is_internal = flg.ifr_flags & IFF_LOOPBACK ? 1 : 0;
-
     address++;
   }
 
@@ -478,14 +603,15 @@ int uv_interface_addresses(uv_interface_address_t** addresses,
   return 0;
 }
 
+
 void uv_free_interface_addresses(uv_interface_address_t* addresses,
                                  int count) {
   int i;
-  for (i = 0; i < count; ++i) {
+  for (i = 0; i < count; ++i)
     uv__free(addresses[i].name);
-  }
   uv__free(addresses);
 }
+
 
 void uv__platform_invalidate_fd(uv_loop_t* loop, int fd) {
   struct epoll_event* events;
@@ -503,16 +629,11 @@ void uv__platform_invalidate_fd(uv_loop_t* loop, int fd) {
       if ((int) events[i].fd == fd)
         events[i].fd = -1;
 
-  /* Remove the file descriptor from the epoll.
-   * This avoids a problem where the same file description remains open
-   * in another process, causing repeated junk epoll events.
-   *
-   * We pass in a dummy epoll_event, to work around a bug in old kernels.
-   */
-  if (loop->backend_fd >= 0) {
-    epoll_ctl(loop->backend_fd, UV__EPOLL_CTL_DEL, fd, &dummy);
-  }
+  /* Remove the file descriptor from the epoll. */
+  if (loop->ep != NULL)
+    epoll_ctl(loop->ep, UV__EPOLL_CTL_DEL, fd, &dummy);
 }
+
 
 int uv__io_check_fd(uv_loop_t* loop, int fd) {
   struct pollfd p[1];
@@ -534,35 +655,29 @@ int uv__io_check_fd(uv_loop_t* loop, int fd) {
   return 0;
 }
 
+
 void uv__fs_event_close(uv_fs_event_t* handle) {
   UNREACHABLE();
 }
 
-int uv_fs_event_init(uv_loop_t* loop, uv_fs_event_t* handle) {
-  uv__handle_init(loop, (uv_handle_t*)handle, UV_FS_EVENT);
-  return 0;
-}
 
-int uv_fs_event_start(uv_fs_event_t* handle,
-    uv_fs_event_cb cb,
-    const char* filename,
-    unsigned int flags) {
+int uv_fs_event_init(uv_loop_t* loop, uv_fs_event_t* handle) {
   return -ENOSYS;
 }
+
+
+int uv_fs_event_start(uv_fs_event_t* handle, uv_fs_event_cb cb,
+                      const char* filename, unsigned int flags) {
+  return -ENOSYS;
+}
+
 
 int uv_fs_event_stop(uv_fs_event_t* handle) {
   return -ENOSYS;
 }
 
+
 void uv__io_poll(uv_loop_t* loop, int timeout) {
-  /* A bug in kernels < 2.6.37 makes timeouts larger than ~30 minutes
-   * effectively infinite on 32 bits architectures.  To avoid blocking
-   * indefinitely, we cap the timeout and poll again if necessary.
-   *
-   * Note that "30 minutes" is a simplification because it depends on
-   * the value of CONFIG_HZ.  The magic constant assumes CONFIG_HZ=1200,
-   * that being the largest value I have seen in the wild (and only once.)
-   */
   static const int max_safe_timeout = 1789569;
   struct epoll_event events[1024];
   struct epoll_event* pe;
@@ -570,11 +685,9 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
   int real_timeout;
   QUEUE* q;
   uv__io_t* w;
-  sigset_t sigset;
-  uint64_t sigmask;
   uint64_t base;
   int count;
-  int nfds=0;
+  int nfds;
   int fd;
   int op;
   int i;
@@ -585,6 +698,8 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
   }
 
   while (!QUEUE_EMPTY(&loop->watcher_queue)) {
+    uv_stream_t* stream;
+
     q = QUEUE_HEAD(&loop->watcher_queue);
     QUEUE_REMOVE(q);
     QUEUE_INIT(q);
@@ -593,7 +708,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     assert(w->pevents != 0);
     assert(w->fd >= 0);
 
-    uv_stream_t *stream= container_of(w, uv_stream_t, io_watcher);
+    stream= container_of(w, uv_stream_t, io_watcher);
 
     assert(w->fd < (int) loop->nwatchers);
 
@@ -608,25 +723,18 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     /* XXX Future optimization: do EPOLL_CTL_MOD lazily if we stop watching
      * events, skip the syscall and squelch the events after epoll_wait().
      */
-    if (epoll_ctl(loop->backend_fd, op, w->fd, &e)) {
+    if (epoll_ctl(loop->ep, op, w->fd, &e)) {
       if (errno != EEXIST)
         abort();
 
       assert(op == UV__EPOLL_CTL_ADD);
 
       /* We've reactivated a file descriptor that's been watched before. */
-      if (epoll_ctl(loop->backend_fd, UV__EPOLL_CTL_MOD, w->fd, &e))
+      if (epoll_ctl(loop->ep, UV__EPOLL_CTL_MOD, w->fd, &e))
         abort();
     }
 
     w->events = w->pevents;
-  }
-
-  sigmask = 0;
-  if (loop->flags & UV_LOOP_BLOCK_SIGPROF) {
-    sigemptyset(&sigset);
-    sigaddset(&sigset, SIGPROF);
-    sigmask |= 1 << (SIGPROF - 1);
   }
 
   assert(timeout >= -1);
@@ -635,19 +743,13 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
   real_timeout = timeout;
   int nevents = 0;
 
+  nfds = 0;
   for (;;) {
-
-
-    /* See the comment for max_safe_timeout for an explanation of why
-     * this is necessary.  Executive summary: kernel bug workaround.
-     */
     if (sizeof(int32_t) == sizeof(long) && timeout >= max_safe_timeout)
       timeout = max_safe_timeout;
 
-    nfds = epoll_wait(loop->backend_fd,
-        events,
-        ARRAY_SIZE(events),
-        timeout);
+    nfds = epoll_wait(loop->ep, events,
+                      ARRAY_SIZE(events), timeout);
 
     /* Update loop->time unconditionally. It's tempting to skip the update when
      * timeout == 0 (i.e. non-blocking poll) but there is no guarantee that the
@@ -655,10 +757,8 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
      */
     base = loop->time;
     SAVE_ERRNO(uv__update_time(loop));
-
     if (nfds == 0) {
       assert(timeout != -1);
-
       timeout = real_timeout - timeout;
       if (timeout > 0)
         continue;
@@ -704,7 +804,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
          * Ignore all errors because we may be racing with another thread
          * when the file descriptor is closed.
          */
-        epoll_ctl(loop->backend_fd, UV__EPOLL_CTL_DEL, fd, pe);
+        epoll_ctl(loop->ep, UV__EPOLL_CTL_DEL, fd, pe);
         continue;
       }
 
@@ -715,21 +815,6 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
        */
       pe->events &= w->pevents | POLLERR | POLLHUP;
 
-      /* Work around an epoll quirk where it sometimes reports just the
-       * EPOLLERR or EPOLLHUP event.  In order to force the event loop to
-       * move forward, we merge in the read/write events that the watcher
-       * is interested in; uv__read() and uv__write() will then deal with
-       * the error or hangup in the usual fashion.
-       *
-       * Note to self: happens when epoll reports EPOLLIN|EPOLLHUP, the user
-       * reads the available data, calls uv_read_stop(), then sometime later
-       * calls uv_read_start() again.  By then, libuv has forgotten about the
-       * hangup and the kernel won't report EPOLLIN again because there's
-       * nothing left to read.  If anything, libuv is to blame here.  The
-       * current hack is just a quick bandaid; to properly fix it, libuv
-       * needs to remember the error/hangup event.  We should get that for
-       * free when we switch over to edge-triggered I/O.
-       */
       if (pe->events == POLLERR || pe->events == POLLHUP)
         pe->events |= w->pevents & (POLLIN | POLLOUT);
 
@@ -766,13 +851,6 @@ update_timeout:
     timeout = real_timeout;
   }
 }
-
-void uv_loadavg(double avg[3]) {
-  avg[0] = 0;
-  avg[1] = 0;
-  avg[2] = 0;
-}
-
 
 char** uv_setup_args(int argc, char** argv) {
   return argv;

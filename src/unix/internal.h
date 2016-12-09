@@ -40,7 +40,7 @@
 
 #if defined(__MVS__)
 # include "os390-syscalls.h"
-#endif /* zos */
+#endif /* __MVS__ */
 
 #if defined(__sun)
 # include <sys/port.h>
