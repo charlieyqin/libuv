@@ -225,7 +225,7 @@ int epoll_file_close(int fd) {
     uv__os390_epoll* lst;
 
     lst = QUEUE_DATA(q, uv__os390_epoll, member);
-    if (lst->items != NULL && lst->items[fd].fd != -1)
+    if (fd < lst->size && lst->items != NULL && lst->items[fd].fd != -1)
       lst->items[fd].fd = -1;
   }
 
@@ -238,6 +238,7 @@ void epoll_queue_close(uv__os390_epoll* lst) {
   QUEUE_REMOVE(&lst->member);
   uv_mutex_unlock(&global_epoll_lock);
   uv__free(lst->items);
+  lst->items = NULL;
 }
 
 
