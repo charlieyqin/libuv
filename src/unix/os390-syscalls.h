@@ -64,5 +64,6 @@ int scandir(const char* maindir, struct dirent*** namelist,
             int (*filter)(const struct dirent *),
             int (*compar)(const struct dirent **,
             const struct dirent **));
+char *mkdtemp(char* path);
 
 #endif /* UV_OS390_SYSCALL_H_ */
