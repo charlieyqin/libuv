@@ -99,10 +99,6 @@ static void connection_cb(uv_stream_t* handle, int status) {
 
 TEST_IMPL(tcp_oob) {
 
-#if defined(__MVS__)
-  RETURN_SKIP("Not supported by the platform");
-#endif
-
   struct sockaddr_in addr;
   uv_loop_t* loop;
 
