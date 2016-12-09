@@ -154,9 +154,6 @@ void uv__pipe_close(uv_pipe_t* handle) {
     handle->pipe_fname = NULL;
   }
 
-#if defined(__MVS__)
-  epoll_file_close(uv__stream_fd(handle));
-#endif
   uv__stream_close((uv_stream_t*)handle);
 }
 

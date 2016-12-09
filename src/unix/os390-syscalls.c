@@ -219,12 +219,13 @@ int epoll_wait(uv__os390_epoll* lst, struct epoll_event* events,
 int epoll_file_close(int fd) {
   QUEUE* q;
 
+  uv_once(&once, epoll_init);
   uv_mutex_lock(&global_epoll_lock);
   QUEUE_FOREACH(q, &global_epoll_queue) {
     uv__os390_epoll* lst;
 
     lst = QUEUE_DATA(q, uv__os390_epoll, member);
-    if (lst->items[fd].fd != -1)
+    if (lst->items != NULL && lst->items[fd].fd != -1)
       lst->items[fd].fd = -1;
   }
 
