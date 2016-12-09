@@ -36,7 +36,7 @@ libuv_la_SOURCES = src/fs-poll.c \
 if SUNOS
 # Can't be turned into a CC_CHECK_CFLAGS in configure.ac, it makes compilers
 # on other platforms complain that the argument is unused during compilation.
-libuv_la_CFLAGS += -pthread
+libuv_la_CFLAGS += -pthreads
 endif
 
 if WINNT
@@ -134,6 +134,13 @@ test_run_tests_CFLAGS =
 else
 test_run_tests_CFLAGS = -Wno-long-long
 endif
+
+if SUNOS
+# Can't be turned into a CC_CHECK_CFLAGS in configure.ac, it makes compilers
+# on other platforms complain that the argument is unused during compilation.
+test_run_tests_CFLAGS += -pthreads
+endif
+
 test_run_tests_LDFLAGS =
 test_run_tests_SOURCES = test/blackhole-server.c \
                          test/dns-server.c \
@@ -284,6 +291,10 @@ if AIX
 test_run_tests_CFLAGS += -D_ALL_SOURCE -D_XOPEN_SOURCE=500 -D_LINUX_SOURCE_COMPAT
 endif
 
+if LINUX
+test_run_tests_CFLAGS += -D_GNU_SOURCE
+endif
+
 if SUNOS
 test_run_tests_CFLAGS += -D__EXTENSIONS__ -D_XOPEN_SOURCE=500
 endif
@@ -390,6 +401,9 @@ libuv_la_CFLAGS += -D_UNIX03_THREADS \
                    -qXPLINK \
                    -qFLOAT=IEEE
 libuv_la_LDFLAGS += -qXPLINK
+libuv_la_SOURCES += src/unix/pthread-fixes.c \
+                    src/unix/pthread-barrier.c
+libuv_la_SOURCES += src/unix/os390.c
 endif
 
 if HAVE_PKG_CONFIG

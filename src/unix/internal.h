@@ -52,7 +52,7 @@
 #endif /* _AIX */
 
 #if defined(__APPLE__) && !TARGET_OS_IPHONE
-# include <CoreServices/CoreServices.h>
+# include <AvailabilityMacros.h>
 #endif
 
 #if defined(__ANDROID__)
@@ -132,7 +132,8 @@ enum {
   UV_TCP_KEEPALIVE        = 0x800,  /* Turn on keep-alive. */
   UV_TCP_SINGLE_ACCEPT    = 0x1000, /* Only accept() when idle. */
   UV_HANDLE_IPV6          = 0x10000, /* Handle is bound to a IPv6 socket. */
-  UV_UDP_PROCESSING       = 0x20000  /* Handle is running the send callback queue. */
+  UV_UDP_PROCESSING       = 0x20000, /* Handle is running the send callback queue. */
+  UV_HANDLE_BOUND         = 0x40000  /* Handle is bound to an address and port */
 };
 
 /* loop flags */

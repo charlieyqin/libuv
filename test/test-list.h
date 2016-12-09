@@ -47,6 +47,8 @@ TEST_DECLARE   (semaphore_3)
 TEST_DECLARE   (tty)
 #ifdef _WIN32
 TEST_DECLARE   (tty_raw)
+TEST_DECLARE   (tty_empty_write)
+TEST_DECLARE   (tty_large_write)
 #endif
 TEST_DECLARE   (tty_file)
 TEST_DECLARE   (tty_pty)
@@ -152,6 +154,7 @@ TEST_DECLARE   (shutdown_eof)
 TEST_DECLARE   (shutdown_twice)
 TEST_DECLARE   (callback_stack)
 TEST_DECLARE   (error_message)
+TEST_DECLARE   (sys_error)
 TEST_DECLARE   (timer)
 TEST_DECLARE   (timer_init)
 TEST_DECLARE   (timer_again)
@@ -403,6 +406,8 @@ TASK_LIST_START
   TEST_ENTRY  (tty)
 #ifdef _WIN32
   TEST_ENTRY  (tty_raw)
+  TEST_ENTRY  (tty_empty_write)
+  TEST_ENTRY  (tty_large_write)
 #endif
   TEST_ENTRY  (tty_file)
   TEST_ENTRY  (tty_pty)
@@ -542,6 +547,7 @@ TASK_LIST_START
   TEST_HELPER (callback_stack, tcp4_echo_server)
 
   TEST_ENTRY  (error_message)
+  TEST_ENTRY  (sys_error)
 
   TEST_ENTRY  (timer)
   TEST_ENTRY  (timer_init)
