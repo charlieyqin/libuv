@@ -433,7 +433,7 @@ static int uv__interface_addresses_v6(uv_interface_address_t** addresses,
 
   ifc.__nif6h_version = 1;
   ifc.__nif6h_buflen = maxsize;
-  ifc.__nif6h_buffer = uv__malloc(maxsize);;
+  ifc.__nif6h_buffer = uv__calloc(1, maxsize);;
 
   if (ioctl(sockfd, SIOCGIFCONF6, &ifc) == -1) {
     uv__close(sockfd);
@@ -441,10 +441,21 @@ static int uv__interface_addresses_v6(uv_interface_address_t** addresses,
   }
 
 
-#define MAX(a,b) (((a)>(b))?(a):(b))
-#define ADDR_SIZE(p) MAX((p).sin6_len, sizeof(p))
+  *count = 0;
+  ifr = (__net_ifconf6entry_t*)(ifc.__nif6h_buffer);
+  while ((char*)ifr < (char*)ifc.__nif6h_buffer + ifc.__nif6h_buflen) {
+    p = ifr;
+    ifr = (__net_ifconf6entry_t*)((char*)ifr + ifc.__nif6h_entrylen);
 
-  *count = ifc.__nif6h_entries;
+    if (!(p->__nif6e_addr.sin6_family == AF_INET6 ||
+          p->__nif6e_addr.sin6_family == AF_INET))
+      continue;
+
+    if (!(p->__nif6e_flags & _NIF6E_FLAGS_ON_LINK_ACTIVE))
+      continue;
+
+    ++(*count);
+  }
 
   /* Alloc the return interface structs */
   *addresses = uv__malloc(*count * sizeof(uv_interface_address_t));
@@ -482,9 +493,6 @@ static int uv__interface_addresses_v6(uv_interface_address_t** addresses,
     address++;
   }
 
-#undef ADDR_SIZE
-#undef MAX
-
   uv__close(sockfd);
   return 0;
 }
@@ -514,7 +522,7 @@ int uv_interface_addresses(uv_interface_address_t** addresses, int* count) {
   if (0 > sockfd)
     return -errno;
 
-  ifc.ifc_req = uv__malloc(maxsize);
+  ifc.ifc_req = uv__calloc(1, maxsize);
   ifc.ifc_len = maxsize;
   if (ioctl(sockfd, SIOCGIFCONF, &ifc) == -1) {
     uv__close(sockfd);
