@@ -166,7 +166,6 @@ int uv__tcp_connect(uv_connect_t* req,
   do {
     errno = 0;
     r = connect(uv__stream_fd(handle), addr, addrlen);
-//printf("connect fd=%d\n", uv__stream_fd(handle));
   } while (r == -1 && errno == EINTR);
 
   /* We not only check the return value, but also check the errno != 0.
@@ -262,7 +261,6 @@ int uv_tcp_getpeername(const uv_tcp_t* handle,
 int uv_tcp_listen(uv_tcp_t* tcp, int backlog, uv_connection_cb cb) {
   static int single_accept = -1;
   int err;
-  struct sockaddr_in saddr;
 
   if (tcp->delayed_error)
     return tcp->delayed_error;

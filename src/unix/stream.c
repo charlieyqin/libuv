@@ -532,7 +532,6 @@ void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
 #endif /* defined(UV_HAVE_KQUEUE) */
 
     err = uv__accept(uv__stream_fd(stream));
-//printf("accept:%d fd=%d gives us fd=%d\n", __LINE__,uv__stream_fd(stream),  err);
     if (err < 0) {
       if (err == -EAGAIN || err == -EWOULDBLOCK)
         return;  /* Not an error. */

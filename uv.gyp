@@ -305,7 +305,7 @@
           'defines': [ 'BUILDING_UV_SHARED=1' ]
         }],
         ['OS=="zos"', {
-          'sources': [ 
+          'sources': [
             'src/unix/pthread-fixes.c',
             'src/unix/pthread-barrier.c',
             'src/unix/os390.c',
@@ -559,10 +559,10 @@
         }],
         ['uv_library=="shared_library"', {
           'defines': [ 'USING_UV_SHARED=1' ],
-          'conditions': [ 
+          'conditions': [
             [ 'OS == "zos"', {
               'cflags': [ '-Wc,DLL' ],
-            }], 
+            }],
           ],
         }],
       ],
