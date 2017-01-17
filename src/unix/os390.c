@@ -206,7 +206,10 @@ static int getexe(const int pid, char* buf, size_t len) {
   }
 
   /* Check highest byte to ensure data availability */
-  assert(((Output_buf.Output_data.offsetPath >>24) & 0xFF) == 'A');
+  if (((Output_buf.Output_data.offsetPath >>24) & 0xFF) != (int)'A') {
+    errno = EINVAL;
+    return -1;
+  }
 
   /* Get the offset from the lowest 3 bytes */
   Output_path = (char*)(&Output_buf) + 
