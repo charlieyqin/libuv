@@ -34,7 +34,7 @@
 #define CVT_PTR           0x10
 #define CSD_OFFSET        0x294
 
-/* 
+/*
     Long-term average CPU service used by this logical partition,
     in millions of service units per hour. If this value is above
     the partition's defined capacity, the partition will be capped.
@@ -57,8 +57,8 @@
 /* Address of the rsm control and enumeration area. */
 #define CVTRCEP_OFFSET    0x490
 
-/* 
-    Number of frames currently available to system. 
+/*
+    Number of frames currently available to system.
     Excluded are frames backing perm storage, frames offline, and bad frames.
 */
 #define RCEPOOL_OFFSET    0x004
@@ -86,7 +86,7 @@ typedef union {
     data_area_ptr_assign_type assign;
   };
   char* deref;
-} data_area_ptr; 
+} data_area_ptr;
 
 
 void uv_loadavg(double avg[3]) {
@@ -124,7 +124,7 @@ uint64_t uv__hrtime(uv_clocktype_t type) {
 }
 
 
-/*  
+/*
     Get the exe path using the thread entry information
     in the address space.
 */
@@ -169,8 +169,8 @@ static int getexe(const int pid, char* buf, size_t len) {
   void* Input_address;
   void* Output_address;
   struct Output_path_type* Output_path;
-  int rv; 
-  int rc; 
+  int rv;
+  int rc;
   int rsn;
 
   Input_length = PGTH_LEN;
@@ -206,15 +206,12 @@ static int getexe(const int pid, char* buf, size_t len) {
   }
 
   /* Check highest byte to ensure data availability */
-  if (((Output_buf.Output_data.offsetPath >>24) & 0xFF) != (int)'A') {
-    errno = EINVAL;
-    return -1;
-  }
+  assert(((Output_buf.Output_data.offsetPath >>24) & 0xFF) == 'A');
 
   /* Get the offset from the lowest 3 bytes */
-  Output_path = (char*)(&Output_buf) + 
+  Output_path = (char*)(&Output_buf) +
                 (Output_buf.Output_data.offsetPath & 0x00FFFFFF);
-  
+
   if (Output_path->len >= len) {
     errno = ENOBUFS;
     return -1;
@@ -559,7 +556,7 @@ int uv_interface_addresses(uv_interface_address_t** addresses, int* count) {
   }
 
   /* Alloc the return interface structs */
-  *addresses = uv__malloc((*count + count_v6) * 
+  *addresses = uv__malloc((*count + count_v6) *
                           sizeof(uv_interface_address_t));
 
   if (!(*addresses)) {
@@ -869,7 +866,7 @@ char** uv_setup_args(int argc, char** argv) {
 
 
 int uv_set_process_title(const char* title) {
-  return 0;
+  return ENOSYS;
 }
 
 
@@ -878,5 +875,5 @@ int uv_get_process_title(char* buffer, size_t size) {
     return -EINVAL;
 
   buffer[0] = '\0';
-  return 0;
+  return ENOSYS;
 }

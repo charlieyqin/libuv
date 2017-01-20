@@ -141,13 +141,14 @@ uv__os390_epoll* epoll_create1(int flags) {
   /* initialize list */
   lst->size = 0;
   lst->items = NULL;
-  return lst; 
+  return lst;
 }
 
 
-int epoll_ctl(uv__os390_epoll* lst, int op, int fd, 
+int epoll_ctl(uv__os390_epoll* lst,
+              int op,
+              int fd,
               struct epoll_event *event) {
-
   if(op == EPOLL_CTL_DEL) {
     if (fd >= lst->size || lst->items[fd].fd == -1) {
       errno = ENOENT;
@@ -209,7 +210,7 @@ int epoll_wait(uv__os390_epoll* lst, struct epoll_event* events,
       ev.events = ev.events | POLLHUP;
 
     pfds[i].revents = 0;
-    events[reventcount++] = ev; 
+    events[reventcount++] = ev;
   }
 
   return reventcount;
@@ -255,7 +256,7 @@ int nanosleep(const struct timespec* req, struct timespec* rem) {
   nano = (int)req->tv_nsec;
   seconds = req->tv_sec;
   events = CW_CONDVAR;
-  
+
 #if defined(_LP64)
   BPX4CTW(&seconds, &nano, &events, &secrem, &nanorem, &rv, &rc, &rsn);
 #else
